@@ -1,145 +1,149 @@
 # BADB Event Bot
 
-Google Form submission → admin approval in Discord → Google Calendar. From
-there, **Google Calendar is the single source of truth** for public events —
-it's shared on the website and members subscribe to it directly. Discord
-(the `#events` channel and Discord's own Scheduled Events) and a bi-weekly
-email are downstream notification channels that mirror whatever is on the
-Calendar. The one thing that flows back is RSVPs: members RSVP through a
-single RSVP page (linked from Discord buttons and every email), and the bot
-adds them to the Calendar event's guest list.
+Keeps the Bay Area Droid Builders' events in one place and tells everyone
+about them. Google Calendar is the source of truth. The bot gets events onto
+it, announces them in Discord and by email, and collects RSVPs onto each
+event's guest list.
 
-## Architecture
+## What it does
 
-- **`formSubmit`** (Cloud Function): receives a POST from the Apps Script
-  trigger, posts a formatted embed with **Approve** / **Dismiss** buttons
-  into your admin channel.
-- **`interactions`** (Cloud Function): Discord's required Interactions
-  Endpoint. Verifies the request is really from Discord, then on
-  **Approve** adds the event to Google Calendar — nothing else. The Discord
-  event and public announcement follow automatically once `pollScheduledEvents`
-  picks up the new Calendar entry. The Calendar event's ID is derived from
-  the request's Discord message ID, so clicking Approve twice (or retrying
-  after a failure) never creates a duplicate. The outcome (✅ approved,
-  ❌ dismissed, or ⚠️ not added, with the reason) is always written onto the
-  request message itself, so check the message if Discord says "This
-  interaction failed". That toast only means the reply took longer than
-  Discord's 3-second limit.
-- **`pollScheduledEvents`** (Cloud Function, run every 5 minutes via Cloud
-  Scheduler): the core sync. Uses the Calendar API's incremental sync (a
-  `syncToken`, stored in Firestore) so each run only sees what actually
-  changed since the last one — created, updated, or cancelled — rather than
-  re-scanning everything. For each change it mirrors the corresponding
-  Discord Scheduled Event (create / update / mark CANCELED) and posts to
-  the public `#events` channel: "📅 New event", "🔄 EVENT UPDATE", or
-  "🚫 EVENT CANCELLED". New-event posts carry **Attending / Maybe /
-  Decline** buttons, and each new event is also emailed to the R2SF Google
-  Group with RSVP links. An event created directly in Discord (bypassing
-  Calendar) is intentionally never picked up — Calendar is the only
-  supported entry point. Each run then also lines up Discord "Interested"
-  clicks with the guest list and retries any RSVPs that didn't reach
-  Calendar (see **RSVPs** below).
-- **`sendEventDigest`** (Cloud Function, run weekly via Cloud Scheduler but
-  only actually sends every other run — see below): lists upcoming Calendar
-  events and emails the list, with RSVP links, to the R2SF Google Group via
-  Gmail SMTP. It doesn't post to Discord — `#events` only gets new-event
-  announcements.
-- **`rsvp`** (Cloud Function, public): the RSVP page. See **RSVPs** below.
+**Event requests.** Members request an event through a Google Form. Each
+request shows up in the Discord admin channel with **Approve** and
+**Dismiss** buttons. Approve adds the event to Google Calendar. The result
+(✅ approved, ❌ dismissed, or ⚠️ not added, with the reason) is written
+onto the request message.
 
-## Builders-only events
+**Announcements.** Within 5 minutes of an event being added to the
+calendar, by approval or by hand, the bot:
 
-Some events are for Bay Area Droid Builders members only. Add them to the
-same Google Calendar by hand and set the event's visibility to **Private**
-(in the event's details, change "Default visibility" to "Private"). People
-viewing the public calendar then see only "busy" for that time.
+- posts "📅 New event" in `#events` with **Attending / Maybe / Decline**
+  buttons,
+- creates a matching Discord Scheduled Event, and
+- emails the event, with RSVP links, to the R2SF Google Group.
 
-For a private event, the bot:
+Changes to the title, time, location, or description post a
+"🔄 EVENT UPDATE". When an event is cancelled or deleted, the original
+announcement is marked "🚫 CANCELLED" (red, buttons removed), a
+cancellation notice is posted as a reply to it, and the Scheduled Event is
+marked cancelled.
 
-- adds **(BUILDERS ONLY)** to the end of the title and "This is a Bay Area
-  Droid Builders Members only event announcement. Do Not Share!" to the
-  top of the description, in Discord, emails, and the RSVP page. If you
-  type them into the event yourself, they aren't added twice.
-- posts the announcement, updates, and cancellation to the builders
-  channel (`DISCORD_BUILDERS_CHANNEL_ID`) instead of `#events`. With no
-  builders channel set, it posts them nowhere in Discord.
-- doesn't create a Discord Scheduled Event, since the whole server can see
-  those.
-- still emails it to the R2SF list and includes it in the digest.
+**Digest.** Every other Monday at 8am Pacific, upcoming events are emailed
+to the R2SF list. The digest isn't posted to Discord.
 
-Making an already-announced public event private deletes its Discord
-Scheduled Event and announces it in the builders channel, but the earlier
-`#events` post stays up, so delete that by hand. Making a private event
-public creates its Scheduled Event and announces it in `#events`.
+**RSVPs.** Every button and email link leads to one RSVP page. An answer
+there puts the person on the Calendar event's guest list, so Attending or
+Maybe also sends them a Google Calendar invite.
 
-## RSVPs
+**Builders-only events.** Members-only events stay out of public channels.
+See below.
 
-There's one RSVP page for everything. Each event's Discord buttons and email
-links open it with that event (and the chosen answer) filled in. Someone
-picks **Attending**, **Maybe**, or **Decline**, and the bot puts them on the
-Calendar event's guest list with that response, so Attending or Maybe also
-sends them a Google Calendar invite.
+## Everyday tasks
 
-- **First RSVP:** they enter their name and email, and the page emails them
-  a confirmation link, so nobody can RSVP an address that isn't theirs.
-  Confirming sets a signed cookie, so that browser RSVPs in one click from
-  then on.
-- **From Discord:** a button replies with a private link carrying a signed
-  token of the clicker's Discord ID. Once they confirm, their Discord
-  account is linked to their email (`discordLinks` in Firestore).
-- **Discord "Interested":** Discord never gives bots anyone's email, so this
-  only works for linked members. For them, `pollScheduledEvents` treats
-  Interested as Attending and takes them back off the guest list if they
-  un-click it. An answer given on the page always wins over Interested.
-- **Answers from Google Calendar stick:** if someone changes their response
-  in their own calendar, the bot leaves it alone. It only writes to the
-  guest list when someone RSVPs.
+### Add a builders-only event
 
-RSVPs are saved to Firestore (`rsvps`) before being copied to Calendar, so a
-Calendar outage never loses one; the poller retries anything not yet copied.
-The bot acts on Calendar as the club Google account rather than a service
-account, because Calendar won't let a service account add guests unless it
-belongs to a Google Workspace domain.
+Add the event to the club calendar by hand and set its visibility to
+**Private**. The public calendar then shows only "busy" for that time. The
+bot:
 
-Firestore (`(default)` database, Native mode) holds a few small collections:
-`calendarEvents` (Calendar event ID → mirrored Discord event ID + last-seen
-fields, so updates/cancellations can be detected and applied idempotently)
-and `calendarSync` (the incremental sync cursor, plus a short-lived lock so
-two overlapping `pollScheduledEvents` runs — say a manual run during a
-scheduled one — can't both mirror the same new event into Discord). `digestState` holds the
-bi-weekly on/off toggle. `rsvps`, `discordLinks`, and `rsvpConfirmThrottle`
-back the RSVP flow above.
+- adds **(BUILDERS ONLY)** to the title and "This is a Bay Area Droid
+  Builders Members only event announcement. Do Not Share!" to the top of
+  the description, everywhere it shows the event. Typing them yourself is
+  fine, since they aren't added twice.
+- announces it in the builders channel, not `#events`, and creates no
+  Scheduled Event (the whole server can see those).
+- still emails it to R2SF and includes it in the digest.
 
-## One-time setup
+Making an already-announced event private moves it to the builders
+channel, but its `#events` post stays up, so delete that by hand.
 
-1. Complete the Discord Developer Portal steps (app, bot, permissions,
-   public key, guild/channel IDs) — see the walkthrough you were given
-   alongside this code. The bot's role needs **Manage Events** (guild-wide)
-   and **View Channel + Send Messages** on both the admin channel and the
-   public `#events` channel.
-2. Make sure the club Google account (badroidbuilders@gmail.com) has
-   **Make changes to events** on the Calendar. Grab the Calendar ID from
-   Calendar Settings > Integrate calendar.
-3. Let the bot act on Calendar as the club account:
-   1. In Google Cloud Console > **Google Auth Platform**, set up the
-      consent screen (External), add the
+### Test or resend the digest
+
+Call `sendEventDigest` with `?to=<your email>` to send it only to you, or
+`?force=true` to send it to the list off-schedule. Neither affects the
+every-other-week schedule.
+
+### Sync the calendar now
+
+```
+gcloud scheduler jobs run badb-poll-scheduled-events --location=us-west1
+```
+
+### Deploy a change
+
+`npm run deploy:<function>`, where `<function>` is `form-submit`,
+`interactions`, `poll-scheduled-events`, `send-event-digest`, or `rsvp`.
+The deploy prints every value from `.env.yaml`, secrets included, so keep
+its output to yourself.
+
+## How it works
+
+Five Cloud Functions, with Firestore for state:
+
+| Function | Trigger | Job |
+|---|---|---|
+| `formSubmit` | Apps Script, on each form response | Posts the request to the admin channel. |
+| `interactions` | Discord button clicks | Approve/Dismiss on requests; replies to RSVP buttons with a personal RSVP link. |
+| `pollScheduledEvents` | Cloud Scheduler, every 5 minutes | Mirrors calendar changes into Discord, sends new-event emails, syncs Discord "Interested" clicks, and copies RSVPs onto Calendar. |
+| `sendEventDigest` | Cloud Scheduler, weekly | Emails the digest every other run. |
+| `rsvp` | Public web page | The RSVP page. |
+
+- **Calendar is the only way in.** The poller reads Calendar changes with
+  an incremental sync token, so each run sees only what changed. Events
+  created directly in Discord are ignored.
+- **Approving is safe to repeat.** The Calendar event's ID comes from the
+  request's Discord message ID, so clicking Approve twice can't create a
+  duplicate. If Discord says "This interaction failed", the click still
+  worked. Check the request message for the result.
+- **RSVP identity.** A first RSVP asks for a name and email and sends a
+  confirmation link, so nobody can RSVP someone else's address. Confirming
+  sets a cookie, so later RSVPs from that browser take one click. RSVPing
+  from a Discord button also links that Discord account to the email.
+  After that, clicking "Interested" on a Scheduled Event counts as
+  Attending, and un-clicking takes them off again. An answer given on the
+  page always wins, and the bot never overrides a response someone changed
+  in their own calendar.
+- **RSVPs can't be lost.** Each one is saved to Firestore first, and the
+  poller retries any that haven't reached Calendar yet.
+- **The club account acts on Calendar.** The bot uses OAuth as the club
+  Google account, because Calendar only lets service accounts add guests
+  inside a Google Workspace domain.
+
+Firestore collections:
+
+| Collection | Holds |
+|---|---|
+| `calendarEvents` | Each Calendar event's Discord event, announcement message, and last-seen fields. |
+| `calendarSync` | The incremental sync token, and a lock so overlapping poll runs can't double-post. |
+| `digestState` | The every-other-week toggle. |
+| `rsvps`, `discordLinks`, `rsvpConfirmThrottle` | RSVPs, Discord-to-email links, and confirmation-email rate limiting. |
+
+## Setup
+
+1. **Discord.** Create the app and bot in the Discord Developer Portal and
+   note the public key and the guild and channel IDs. The bot's role needs
+   **Manage Events** server-wide, plus **View Channel**, **Send Messages**,
+   and **Embed Links** in the admin channel, `#events`, and the builders
+   channel. The builders channel is private, so add the bot to it
+   explicitly.
+2. **Calendar access.** Give the club account (badroidbuilders@gmail.com)
+   **Make changes to events** on the calendar, and copy the Calendar ID
+   from Calendar Settings > Integrate calendar.
+3. **OAuth for the club account.**
+   1. In Google Cloud Console > **Google Auth Platform**, set up an
+      External consent screen with the
       `https://www.googleapis.com/auth/calendar.events` scope, and
-      **publish the app to Production**. While the app is in Testing,
-      Google expires its refresh tokens after 7 days. It doesn't need
-      Google's verification, since only the club account signs in; you'll
-      just click through an "unverified app" warning once.
+      **publish it to Production**. In Testing, refresh tokens expire after
+      7 days. Verification isn't needed, since only the club account signs
+      in, but you'll click through an "unverified app" warning once.
    2. Create an OAuth client of type **Desktop app**.
    3. Run `node scripts/authorize-calendar.js <client ID> <client secret>`,
-      open the printed URL, sign in as the club account, and copy the
-      printed refresh token.
-4. Enable 2-Step Verification on the club Google account, then create an
-   **App password** (Google Account > Security > 2-Step Verification > App
-   passwords). It's used to send the digest, new-event, and RSVP
-   confirmation emails.
-5. `cp .env.yaml.example .env.yaml` and fill in the real values, including
-   the OAuth client, refresh token, and a random `RSVP_SIGNING_SECRET`.
-   `npm install`
-6. Enable the required GCP APIs and create the Firestore database (one-time,
-   per project):
+      sign in as the club account, and copy the refresh token it prints.
+4. **Email.** Turn on 2-Step Verification for the club account and create
+   an **App password** (Google Account > Security > 2-Step Verification >
+   App passwords).
+5. **Config.** `cp .env.yaml.example .env.yaml`, fill in every value (each
+   is explained in the file), then `npm install`. `.env.yaml` is gitignored.
+6. **GCP project.** Enable the APIs and create Firestore:
    ```
    gcloud services enable cloudfunctions.googleapis.com run.googleapis.com \
      cloudbuild.googleapis.com artifactregistry.googleapis.com \
@@ -147,7 +151,7 @@ back the RSVP flow above.
      calendar-json.googleapis.com
    gcloud firestore databases create --location=us-west1 --type=firestore-native
    ```
-7. Deploy all five functions:
+7. **Deploy** all five functions:
    ```
    npm run deploy:form-submit
    npm run deploy:interactions
@@ -155,33 +159,23 @@ back the RSVP flow above.
    npm run deploy:send-event-digest
    npm run deploy:rsvp
    ```
-   If this is the first deploy of `rsvp`, put its trigger URL in
-   `.env.yaml` as `RSVP_PAGE_URL` and redeploy the other functions that
-   build RSVP links (`interactions`, `poll-scheduled-events`,
-   `send-event-digest`).
-   `interactions` is deployed with `--min-instances=1` so one instance is
-   always warm. Discord gives a button click only 3 seconds to be
-   answered, and a cold start alone can use most of that. The idle instance
-   is billed continuously (roughly a few dollars a month at the default
-   size); drop the flag if that isn't worth it.
-   `formSubmit`, `interactions`, and `rsvp` are public and print a
-   **Trigger URL** — save them. `pollScheduledEvents`
-   and `sendEventDigest` are deployed with `--no-allow-unauthenticated`
-   since only Cloud Scheduler should be able to call them.
-8. In the Discord Developer Portal, paste the `interactions` function's URL
-   into **Interactions Endpoint URL** and save. Discord will immediately
-   send a PING to verify it; if the deploy above succeeded this passes
-   automatically.
-9. In the Google Sheet collecting form responses: **Extensions > Apps
-   Script**, paste in `appsscript/onFormSubmit.js`, update
-   `FORM_SUBMIT_URL` (the `formSubmit` trigger URL from step 7) and
-   `SHARED_SECRET` (must match `.env.yaml`'s `FORM_SHARED_SECRET`), then
-   set the `COLUMNS` mapping to match your actual form's question order.
-10. Add a trigger: clock icon on the left > **Add Trigger** > function
-    `onFormSubmit` > event source **From spreadsheet** > event type
-    **On form submit** > Save.
-11. Wire up both schedules, letting each function invoke itself via its own
-    service account:
+   Note the trigger URLs that `formSubmit`, `interactions`, and `rsvp`
+   print. On the first deploy, set `RSVP_PAGE_URL` in `.env.yaml` to the
+   `rsvp` URL, then redeploy `interactions`, `poll-scheduled-events`, and
+   `send-event-digest`. `pollScheduledEvents` and `sendEventDigest` only
+   accept calls from Cloud Scheduler. `interactions` keeps one instance
+   warm (a few dollars a month), because Discord allows only 3 seconds to
+   answer a click.
+8. **Discord endpoint.** Paste the `interactions` URL into **Interactions
+   Endpoint URL** in the Developer Portal and save. Discord verifies it
+   straight away.
+9. **Form trigger.** In the form's response Sheet, open **Extensions > Apps
+   Script** and paste in `appsscript/onFormSubmit.js`. Set
+   `FORM_SUBMIT_URL` to the `formSubmit` URL, `SHARED_SECRET` to
+   `FORM_SHARED_SECRET` from `.env.yaml`, and `COLUMNS` to match the form's
+   question order. Then add a trigger (clock icon > **Add Trigger**):
+   function `onFormSubmit`, **From spreadsheet**, **On form submit**.
+10. **Schedules.** Let Cloud Scheduler call the two scheduled functions:
     ```
     gcloud functions add-invoker-policy-binding badb-poll-scheduled-events \
       --region=us-west1 \
@@ -206,53 +200,29 @@ back the RSVP flow above.
       --oidc-service-account-email="PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
       --oidc-token-audience="<sendEventDigest trigger URL>"
     ```
-    `sendEventDigest` runs weekly but only actually sends every other
-    invocation (a Firestore-backed toggle) — a real "every 2 weeks" cron
-    schedule doesn't exist, so this is the standard workaround. For a manual
-    test, pass `?to=<your email>` to send just to yourself, or
-    `?force=true` to send to the real list off-schedule; neither changes
-    the toggle, so testing never shifts the schedule.
+    Cron has no "every 2 weeks", so the digest job runs weekly and the
+    function sends on every other run.
 
-## Testing
+## Development
 
-Unit tests: `npm test` (vitest; runs pinned to UTC like Cloud Functions so
-timezone bugs aren't hidden by your machine's local zone).
+- **Tests:** `npm test`. They run in UTC, like Cloud Functions, so time zone
+  bugs show up locally.
+- **Run locally:** `npm run start:<function>` (for example
+  `start:poll-scheduled-events`) starts it on the Functions Framework. Use a
+  tunnel such as `ngrok` if Discord needs to reach it.
+- **End to end:** submit the real Google Form (editing the Sheet by hand
+  doesn't fire the trigger), approve the request in the admin channel, then
+  run the poll as shown above.
 
-End to end: submit a test response through the actual Google Form (Apps Script
-`onFormSubmit` triggers don't fire from manually editing the sheet). You
-should see the embed appear in the admin channel within a few seconds.
-Click **Approve** and confirm the event shows up in Google Calendar —
-Discord and the `#events` announcement follow within the next
-`pollScheduledEvents` run (or trigger it manually with
-`gcloud scheduler jobs run badb-poll-scheduled-events --location=us-west1`).
+Things you may want to change:
 
-## Notes / things you may want to tweak
-
-- Events are created as `EXTERNAL` (physical location) rather than tied to
-  a voice channel — change `entity_type` in `pollScheduledEvents.ts` if
-  that's ever wrong for a meetup.
-- The form collects an explicit End Time, but `resolveEndIso` in
-  `format.ts` still falls back to a 3-hour block if `endIso` is ever
-  missing.
-- All displayed times (the admin embed, announcements, the digest, and the
-  "Arrival" line in event descriptions) are shown in Pacific time —
-  `EVENT_TIME_ZONE` in `format.ts`.
-- Only meaningful field changes (title, start/end time, location,
-  description) trigger an "EVENT UPDATE" — incidental Calendar metadata
-  touches are ignored, so `#events` doesn't get noisy.
-- Cancelling/deleting a Calendar event marks the mirrored Discord event
-  **CANCELED** rather than deleting it, so it stays visible (greyed out) to
-  anyone who had saved it.
-- Cancelling an event also marks its announcement cancelled (retitled
-  "🚫 CANCELLED", turned red, RSVP buttons removed), and the "EVENT
-  CANCELLED" message is posted as a reply to it. Announcements posted
-  before the bot saved their message IDs are marked the first time someone
-  clicks one of their buttons, and that person is told the event was
-  cancelled.
-- If you ever want role-gating on who can click the admin buttons, the
-  member's roles are available on `interaction.member.roles` inside the
-  handler.
-- Local testing: `npm run start:form-submit`, `start:interactions`,
-  `start:poll-scheduled-events`, or `start:send-event-digest` runs the
-  Functions Framework locally; use a tool like `ngrok` to expose it if you
-  need Discord to actually reach it during dev.
+- **Time zone:** all times are shown in Pacific time (`EVENT_TIME_ZONE` in
+  `src/format.ts`).
+- **Default length:** an event with no end time is treated as 3 hours long
+  (`resolveEndIso` in `src/format.ts`).
+- **Event type:** Scheduled Events are created as in-person (`EXTERNAL`),
+  not voice-channel events (`entity_type` in
+  `src/pollScheduledEvents.ts`).
+- **Who can approve:** anyone who can see the admin channel can approve
+  requests. To restrict it to certain roles, check
+  `interaction.member.roles` in `src/interactions.ts`.
