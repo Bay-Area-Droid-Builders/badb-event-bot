@@ -1,7 +1,7 @@
 import type { calendar_v3 } from "googleapis";
 import { formatCalendarEventWhen } from "./format";
 import type { Email } from "./mailer";
-import { RSVP_CHOICES, RSVP_LABELS, rsvpPageUrl } from "./rsvpLinks";
+import { RSVP_CHOICES, RSVP_LABELS, rsvpLogoUrl, rsvpPageUrl } from "./rsvpLinks";
 
 // The emails sent to the R2SF Google Group: the bi-weekly digest and the
 // announcement of each new event. Every event in them carries RSVP links.
@@ -50,9 +50,18 @@ function eventHtml(event: calendar_v3.Schema$Event): string {
   return `<p><strong>${escapeHtml(event.summary || "Untitled event")}</strong><br>${escapeHtml(eventWhen(event))}${location}${description}${rsvp}</p>`;
 }
 
+const EMAIL_STYLE = "font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #222;";
+
+// The club logo, hosted by the rsvp function. Explicit width/height keep the
+// layout steady in mail clients that block images until asked.
+function logoHtml(): string {
+  return `<p style="text-align: center; margin: 0 0 16px;"><img src="${escapeHtml(rsvpLogoUrl())}" width="96" height="96" alt="Bay Area Droid Builders" style="border: 0;"></p>`;
+}
+
 function wrapHtml(intro: string, body: string): string {
   return `
-<div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #222;">
+<div style="${EMAIL_STYLE}">
+  ${logoHtml()}
   <p>Hey Builders!</p>
   <p>${intro}</p>
   ${body}
@@ -109,22 +118,33 @@ export function buildRsvpConfirmEmail(
   to: string,
 ): Email {
   const summary = event.summary || "Untitled event";
+  const status = statusLabel.toUpperCase();
+  const intro = "Confirm your RSVP for the upcoming Bay Area Droid Builders event:";
+  const ignore = "If you didn't ask for this, ignore this email and nothing will happen.";
   const text = [
     `Hi ${name},`,
     "",
-    `Confirm your RSVP (${statusLabel}) for ${summary} — ${eventWhen(event)}:`,
-    confirmUrl,
+    intro,
     "",
-    "If you didn't ask for this, ignore this email and nothing will happen.",
+    `${summary} — ${eventWhen(event)}`,
+    "",
+    `You've RSVPed as ${status}.`,
+    "",
+    `Confirm my RSVP: ${confirmUrl}`,
+    "",
+    ignore,
     "",
     "Bay Area Droid Builders",
   ].join("\n");
   const html = `
-<div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #222;">
+<div style="${EMAIL_STYLE}">
+  ${logoHtml()}
   <p>Hi ${escapeHtml(name)},</p>
-  <p>Confirm your RSVP (<strong>${escapeHtml(statusLabel)}</strong>) for <strong>${escapeHtml(summary)}</strong> — ${escapeHtml(eventWhen(event))}:</p>
+  <p>${intro}</p>
+  <p><strong>${escapeHtml(summary)}</strong> — ${escapeHtml(eventWhen(event))}</p>
+  <p>You've RSVPed as <strong>${escapeHtml(status)}</strong>.</p>
   <p><a href="${escapeHtml(confirmUrl)}" style="display: inline-block; background: #8a2be2; color: #fff; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: bold;">Confirm my RSVP</a></p>
-  <p style="color: #666;">If you didn't ask for this, ignore this email and nothing will happen.</p>
+  <p style="color: #666;">${ignore}</p>
   <p>Bay Area Droid Builders</p>
 </div>
 `.trim();

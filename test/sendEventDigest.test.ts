@@ -49,6 +49,7 @@ describe("sendEventDigest cadence", () => {
     process.env.DISCORD_ANNOUNCEMENT_CHANNEL_ID = "events";
     process.env.GMAIL_SENDER_EMAIL = "bot@example.com";
     process.env.GMAIL_APP_PASSWORD = "pw";
+    process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
   });
 
   it("sends every other scheduled run, indefinitely", async () => {
