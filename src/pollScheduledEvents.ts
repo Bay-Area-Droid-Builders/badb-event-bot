@@ -16,7 +16,7 @@ import {
   setEmailPending,
   StoredEventMapping,
 } from "./eventSync";
-import { formatCalendarEventWhen } from "./format";
+import { formatCalendarEventWhen, htmlToText } from "./format";
 import { listCalendarChanges } from "./googleCalendar";
 import { sendEmail } from "./mailer";
 import { syncPendingRsvps } from "./rsvpCalendar";
@@ -32,7 +32,7 @@ const PRIVACY_LEVEL_GUILD_ONLY = 2;
 function extractFields(event: calendar_v3.Schema$Event) {
   return {
     summary: event.summary || "Untitled event",
-    description: event.description || "",
+    description: htmlToText(event.description || ""),
     startIso: event.start?.dateTime ?? event.start?.date ?? "",
     endIso: event.end?.dateTime ?? event.end?.date ?? "",
     location: event.location || "",

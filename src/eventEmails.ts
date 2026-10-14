@@ -1,5 +1,5 @@
 import type { calendar_v3 } from "googleapis";
-import { formatCalendarEventWhen } from "./format";
+import { formatCalendarEventWhen, htmlToText } from "./format";
 import type { Email } from "./mailer";
 import { RSVP_CHOICES, RSVP_LABELS, rsvpLogoUrl, rsvpPageUrl } from "./rsvpLinks";
 
@@ -27,7 +27,7 @@ export function eventWhen(event: calendar_v3.Schema$Event): string {
 export function eventText(event: calendar_v3.Schema$Event): string {
   const lines = [event.summary || "Untitled event", eventWhen(event)];
   if (event.location) lines.push(event.location);
-  if (event.description) lines.push(event.description);
+  if (event.description) lines.push(htmlToText(event.description));
   return lines.join("\n");
 }
 
@@ -45,7 +45,9 @@ function rsvpLinksHtml(calendarEventId: string): string {
 
 function eventHtml(event: calendar_v3.Schema$Event): string {
   const location = event.location ? `<br>${escapeHtml(event.location)}` : "";
-  const description = event.description ? `<br>${escapeHtml(event.description)}` : "";
+  // Converted to plain text and re-escaped rather than passed through, so a
+  // description can't inject markup into the email.
+  const description = event.description ? `<br>${escapeHtml(htmlToText(event.description)).replace(/\n/g, "<br>")}` : "";
   const rsvp = event.id ? `<br>${rsvpLinksHtml(event.id)}` : "";
   return `<p><strong>${escapeHtml(event.summary || "Untitled event")}</strong><br>${escapeHtml(eventWhen(event))}${location}${description}${rsvp}</p>`;
 }

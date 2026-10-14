@@ -55,3 +55,45 @@ export function buildRichDescription(description: string, eventType?: string, ar
   const arrivalNote = arrivalIso ? `Arrival: ${formatTime(arrivalIso)}\n\n` : "";
   return `${typeNote}${arrivalNote}${description}`;
 }
+
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
+    if (code[0] === "#") {
+      const point = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+      return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+    }
+    return NAMED_ENTITIES[code.toLowerCase()] ?? entity;
+  });
+}
+
+// Google Calendar stores descriptions edited in its UI as HTML (<br>, <b>,
+// <a href>, lists, &nbsp;), which Discord and plain-text email would show as
+// raw tags. This turns it into readable plain text: line breaks and list
+// items are kept, a link keeps its URL, and every other tag is dropped.
+// Descriptions with no tags — like the ones the request form writes — are
+// returned unchanged, so a literal "<" or "&" in them is left alone.
+export function htmlToText(description: string): string {
+  if (!/<\/?[a-z][^>]*>/i.test(description)) return description;
+
+  const text = description
+    // Literal newlines are kept, not treated as HTML whitespace: a description
+    // can mix plain-text line breaks with a few tags, and losing those breaks
+    // is worse than an extra blank line (runs of those are collapsed below).
+    .replace(/\r\n?/g, "\n")
+    .replace(/<a\b[^>]*?href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote, href: string, inner: string) => {
+      const label = inner.replace(/<[^>]+>/g, "").trim();
+      return label && decodeEntities(label) !== decodeEntities(href) ? `${label} (${href})` : href;
+    })
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n• ")
+    .replace(/<\/(p|div|ul|ol|h[1-6]|tr|blockquote)>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+
+  return decodeEntities(text)
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

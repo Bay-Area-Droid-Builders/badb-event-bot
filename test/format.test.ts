@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRichDescription, formatCalendarEventWhen, formatEventWhen, formatTime } from "../src/format";
+import { buildRichDescription, formatCalendarEventWhen, formatEventWhen, formatTime, htmlToText } from "../src/format";
 
 // The Apps Script trigger sends UTC instants (Date#toISOString), so a 6 PM
 // PDT start arrives as 01:00Z the next day.
@@ -49,5 +49,37 @@ describe("formatTime", () => {
 describe("buildRichDescription", () => {
   it("writes the arrival time in Pacific", () => {
     expect(buildRichDescription("Bring droids.", "Meetup", ARRIVAL_5PM_PDT)).toBe("Type: Meetup\n\nArrival: 5:00 PM\n\nBring droids.");
+  });
+});
+
+describe("htmlToText", () => {
+  it("turns Google Calendar's HTML into plain text with the line breaks kept", () => {
+    expect(htmlToText("Bring your <b>droids</b>!<br>Parking is <i>free</i>.<br><br>See you there")).toBe(
+      "Bring your droids!\nParking is free.\n\nSee you there",
+    );
+  });
+
+  it("keeps a link's URL next to its text, or just the URL when they match", () => {
+    expect(htmlToText('Tickets <a href="https://example.com/t?a=1&amp;b=2" target="_blank">here</a>')).toBe(
+      "Tickets here (https://example.com/t?a=1&b=2)",
+    );
+    expect(htmlToText('<a href="https://example.com">https://example.com</a>')).toBe("https://example.com");
+  });
+
+  it("writes list items as bullets", () => {
+    expect(htmlToText("What to bring:<ul><li>Droid</li><li>Snacks</li></ul>")).toBe("What to bring:\n• Droid\n• Snacks");
+  });
+
+  it("decodes entities, including numeric ones", () => {
+    expect(htmlToText("<p>R2&nbsp;&amp;&nbsp;BB-8 &lt;3 &#8212; &#x1F916;</p>")).toBe("R2 & BB-8 <3 — 🤖");
+  });
+
+  it("drops paragraph and div wrappers without piling up blank lines", () => {
+    expect(htmlToText("<div>First</div>\n<div><br></div><div><br></div><div>Second</div>")).toBe("First\n\nSecond");
+  });
+
+  it("leaves a plain-text description alone, even with a stray < or &", () => {
+    const plain = "Type: Meetup\n\nArrival: 5:00 PM\n\nKids < 12 & parents welcome &amp; more";
+    expect(htmlToText(plain)).toBe(plain);
   });
 });
