@@ -19,3 +19,6 @@ node_modules
 # Tests are not needed at runtime
 test/
 vitest.config.ts
+
+# One-time local tooling
+scripts/

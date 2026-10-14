@@ -48,6 +48,24 @@ describe("interactions", () => {
   beforeEach(() => {
     events.length = 0;
     process.env.DISCORD_PUBLIC_KEY = "key";
+    process.env.RSVP_SIGNING_SECRET = "test-secret";
+    process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
+  });
+
+  it("answers an RSVP button click with a private link, without touching the message", async () => {
+    vi.mocked(editMessage).mockClear();
+    const res = fakeResponse();
+
+    await handler(
+      fakeRequest({ ...componentClick, data: { custom_id: "rsvp:attending:cal-1" }, member: { user: { id: "user-r2", username: "r2d2" } } }),
+      res,
+    );
+
+    const reply = res.json.mock.calls[0][0];
+    expect(reply.type).toBe(4);
+    expect(reply.data.flags).toBe(64);
+    expect(reply.data.components[0].components[0].url).toContain("event=cal-1");
+    expect(editMessage).not.toHaveBeenCalled();
   });
 
   it("finishes the work and updates the message before responding to Discord", async () => {

@@ -1,16 +1,13 @@
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import { Firestore } from "@google-cloud/firestore";
-import type { calendar_v3 } from "googleapis";
-import nodemailer from "nodemailer";
 import { postChannelMessage } from "./discordApi";
-import { formatCalendarEventWhen } from "./format";
+import { buildDigestDiscordText, buildDigestEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
 import { getCalendarClient } from "./googleAuth";
+import { sendEmail } from "./mailer";
 
 const firestore = new Firestore();
 const DIGEST_STATE_DOC = firestore.collection("digestState").doc("state");
-const MAILING_LIST_ADDRESS = "R2SF@googlegroups.com";
-const CALENDAR_VIEW_URL = "https://calendar.google.com/calendar/embed?src=" + encodeURIComponent(process.env.GOOGLE_CALENDAR_ID ?? "");
 
 // Runs weekly via Cloud Scheduler but only actually sends every other run,
 // giving a true bi-weekly cadence without relying on fragile day-of-month
@@ -27,80 +24,6 @@ async function isDueThisRun(): Promise<boolean> {
 
 async function setDueNext(dueNext: boolean): Promise<void> {
   await DIGEST_STATE_DOC.set({ dueNext }, { merge: true });
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function eventWhen(event: calendar_v3.Schema$Event): string {
-  const startIso = event.start?.dateTime ?? event.start?.date ?? "";
-  const endIso = event.end?.dateTime ?? event.end?.date ?? undefined;
-  return formatCalendarEventWhen(startIso, endIso);
-}
-
-// Callers only invoke this with a non-empty list — sendEventDigest skips
-// sending entirely when there's nothing upcoming.
-function buildPlainTextBody(events: calendar_v3.Schema$Event[]): string {
-  const eventsBlock = events
-    .map((event) => {
-      const when = eventWhen(event);
-      const lines = [event.summary || "Untitled event", when];
-      if (event.location) lines.push(event.location);
-      if (event.description) lines.push(event.description);
-      return lines.join("\n");
-    })
-    .join("\n\n");
-
-  return [
-    "Hey Builders!",
-    "",
-    "Here's your digest of the upcoming events for the Bay Area Droid Builders:",
-    "",
-    eventsBlock,
-    "",
-    "Thanks and may the force be with you!",
-    "Bay Area Droid Builders",
-  ].join("\n");
-}
-
-function buildEmailHtml(events: calendar_v3.Schema$Event[]): string {
-  const eventsHtml = events
-    .map((event) => {
-      const when = eventWhen(event);
-      const location = event.location ? `<br>${escapeHtml(event.location)}` : "";
-      const description = event.description ? `<br>${escapeHtml(event.description)}` : "";
-      return `<p><strong>${escapeHtml(event.summary || "Untitled event")}</strong><br>${escapeHtml(when)}${location}${description}</p>`;
-    })
-    .join("");
-
-  return `
-<div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #222;">
-  <p>Hey Builders!</p>
-  <p>Here's your digest of the upcoming events for the Bay Area Droid Builders:</p>
-  ${eventsHtml}
-  <p>
-    See the full, always-up-to-date calendar any time:
-    <a href="${CALENDAR_VIEW_URL}" style="color: #8a2be2;">Bay Area Droid Builders Calendar</a>
-  </p>
-  <p>Thanks and may the force be with you!<br>Bay Area Droid Builders</p>
-</div>
-`.trim();
-}
-
-async function sendDigestEmail(subject: string, text: string, html: string, to: string): Promise<void> {
-  const user = process.env.GMAIL_SENDER_EMAIL;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) throw new Error("GMAIL_SENDER_EMAIL / GMAIL_APP_PASSWORD is not set");
-
-  const transporter = nodemailer.createTransport({ service: "gmail", auth: { user, pass } });
-  await transporter.sendMail({
-    from: `Bay Area Droid Builders <${user}>`,
-    to,
-    subject,
-    text,
-    html,
-  });
 }
 
 http("sendEventDigest", async (req: Request, res: Response) => {
@@ -141,13 +64,10 @@ http("sendEventDigest", async (req: Request, res: Response) => {
     return;
   }
 
-  const plainTextBody = buildPlainTextBody(events);
-  const subject = "Upcoming Bay Area Droid Builder Events";
-
   await postChannelMessage(announcementChannelId, {
-    embeds: [{ title: "📋 Upcoming Events", description: plainTextBody, color: 0x8a2be2 }],
+    embeds: [{ title: "📋 Upcoming Events", description: buildDigestDiscordText(events), color: 0x8a2be2 }],
   });
-  await sendDigestEmail(subject, plainTextBody, buildEmailHtml(events), recipient);
+  await sendEmail(buildDigestEmail(events, recipient));
 
   if (isScheduledRun) await setDueNext(false);
   res.status(200).send(`sent digest with ${events.length} event(s) to ${recipient}`);

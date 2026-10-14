@@ -15,10 +15,12 @@
     "start:interactions": "npm run build && functions-framework --target=interactions --source=lib",
     "start:poll-scheduled-events": "npm run build && functions-framework --target=pollScheduledEvents --source=lib",
     "start:send-event-digest": "npm run build && functions-framework --target=sendEventDigest --source=lib",
+    "start:rsvp": "npm run build && functions-framework --target=rsvp --source=lib",
     "deploy:form-submit": "npm run build && gcloud functions deploy badb-form-submit --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=formSubmit --trigger-http --allow-unauthenticated --env-vars-file=.env.yaml",
     "deploy:interactions": "npm run build && gcloud functions deploy badb-interactions --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=interactions --trigger-http --allow-unauthenticated --min-instances=1 --env-vars-file=.env.yaml",
     "deploy:poll-scheduled-events": "npm run build && gcloud functions deploy badb-poll-scheduled-events --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=pollScheduledEvents --trigger-http --no-allow-unauthenticated --env-vars-file=.env.yaml",
-    "deploy:send-event-digest": "npm run build && gcloud functions deploy badb-send-event-digest --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=sendEventDigest --trigger-http --no-allow-unauthenticated --env-vars-file=.env.yaml"
+    "deploy:send-event-digest": "npm run build && gcloud functions deploy badb-send-event-digest --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=sendEventDigest --trigger-http --no-allow-unauthenticated --env-vars-file=.env.yaml",
+    "deploy:rsvp": "npm run build && gcloud functions deploy badb-rsvp --gen2 --runtime=nodejs24 --region=us-west1 --source=. --entry-point=rsvp --trigger-http --allow-unauthenticated --env-vars-file=.env.yaml"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",
