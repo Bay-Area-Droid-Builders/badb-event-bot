@@ -3,7 +3,8 @@ import type { Request, Response } from "@google-cloud/functions-framework";
 import { verifyKey } from "discord-interactions";
 import { editMessage } from "./discordApi";
 import { handleEventRequestAction } from "./eventRequestActions";
-import { parseRsvpCustomId, rsvpLinkReply } from "./rsvpButtons";
+import { getEventMapping } from "./eventSync";
+import { cancelledEventReply, parseRsvpCustomId, rsvpLinkReply } from "./rsvpButtons";
 
 const InteractionType = { PING: 1, MESSAGE_COMPONENT: 3 };
 const InteractionResponseType = {
@@ -43,16 +44,25 @@ http("interactions", async (req: Request, res: Response) => {
     return;
   }
 
-  // RSVP buttons on #events announcements reply straight away with a private
-  // link — building it needs no I/O, so it fits easily in Discord's 3 seconds.
+  const channelId = interaction.channel_id ?? interaction.channel?.id;
+
+  // RSVP buttons on new-event announcements reply straight away with a
+  // private link. The one lookup and edit here fit easily in Discord's 3
+  // seconds.
   const rsvp = parseRsvpCustomId(interaction.data?.custom_id);
   const user = interaction.member?.user ?? interaction.user;
   if (rsvp && user?.id) {
+    if (await isCancelled(rsvp.calendarEventId)) {
+      // The poller takes the buttons off when an event is cancelled, but
+      // not on posts from before it saved where it announced each event.
+      await removeButtons(channelId, interaction.message?.id);
+      res.status(200).json(cancelledEventReply());
+      return;
+    }
     res.status(200).json(rsvpLinkReply(rsvp.status, rsvp.calendarEventId, user));
     return;
   }
 
-  const channelId = interaction.channel_id ?? interaction.channel?.id;
   const messageId = interaction.message?.id;
   const embed = interaction.message?.embeds?.[0];
 
@@ -78,3 +88,23 @@ http("interactions", async (req: Request, res: Response) => {
 
   res.status(200).json({ type: InteractionResponseType.DEFERRED_UPDATE_MESSAGE });
 });
+
+// A failed lookup counts as not cancelled: the RSVP page itself still says
+// when an event was cancelled.
+async function isCancelled(calendarEventId: string): Promise<boolean> {
+  try {
+    return (await getEventMapping(calendarEventId))?.status === "cancelled";
+  } catch (err) {
+    console.error(`Failed to look up calendar event ${calendarEventId}`, err);
+    return false;
+  }
+}
+
+async function removeButtons(channelId: string | undefined, messageId: string | undefined): Promise<void> {
+  if (!channelId || !messageId) return;
+  try {
+    await editMessage(channelId, messageId, { components: [] });
+  } catch (err) {
+    console.error(`Failed to remove RSVP buttons from message ${messageId}`, err);
+  }
+}

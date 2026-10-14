@@ -63,3 +63,11 @@ export function rsvpLinkReply(
     },
   };
 }
+
+// The reply to an RSVP button click on a cancelled event.
+export function cancelledEventReply(): object {
+  return {
+    type: 4, // CHANNEL_MESSAGE_WITH_SOURCE
+    data: { flags: 64, content: "This event has been cancelled, so there's nothing to RSVP to." }, // EPHEMERAL
+  };
+}

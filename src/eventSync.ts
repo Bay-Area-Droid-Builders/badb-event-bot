@@ -26,6 +26,11 @@ export interface EventMapping {
   // A private Calendar event (see src/buildersOnly.ts). Absent on events
   // mirrored before builders-only events existed.
   buildersOnly?: boolean;
+  // The new-event announcement with the RSVP buttons, so they can be taken
+  // off when the event is cancelled. Absent on events announced before this
+  // was saved, and when there was no channel to post in.
+  announcementChannelId?: string;
+  announcementMessageId?: string;
 }
 
 export interface StoredEventMapping extends EventMapping {
