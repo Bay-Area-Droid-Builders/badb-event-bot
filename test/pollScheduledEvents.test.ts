@@ -19,14 +19,15 @@ vi.mock("../src/discordInterest", () => ({ syncDiscordInterest: vi.fn(async () =
 vi.mock("../src/rsvpCalendar", () => ({ syncPendingRsvps: vi.fn(async () => 0) }));
 vi.mock("../src/discordApi", () => ({
   createGuildScheduledEvent: vi.fn(async () => ({ id: "discord-event" })),
+  deleteGuildScheduledEvent: vi.fn(async () => {}),
   updateGuildScheduledEvent: vi.fn(async () => ({})),
   postChannelMessage: vi.fn(async () => ({})),
 }));
 
 import "../src/pollScheduledEvents";
-import { createGuildScheduledEvent, postChannelMessage } from "../src/discordApi";
+import { createGuildScheduledEvent, deleteGuildScheduledEvent, postChannelMessage, updateGuildScheduledEvent } from "../src/discordApi";
 import { syncDiscordInterest } from "../src/discordInterest";
-import { acquirePollLock, listEventMappingsPendingEmail, releasePollLock, saveEventMapping, setEmailPending } from "../src/eventSync";
+import { acquirePollLock, getEventMapping, listEventMappingsPendingEmail, releasePollLock, saveEventMapping, setEmailPending } from "../src/eventSync";
 import { listCalendarChanges } from "../src/googleCalendar";
 import { sendEmail } from "../src/mailer";
 import { syncPendingRsvps } from "../src/rsvpCalendar";
@@ -57,6 +58,7 @@ describe("pollScheduledEvents", () => {
     steps.length = 0;
     process.env.DISCORD_GUILD_ID = "guild";
     process.env.DISCORD_ANNOUNCEMENT_CHANNEL_ID = "events";
+    process.env.DISCORD_BUILDERS_CHANNEL_ID = "builders";
     process.env.GOOGLE_CALENDAR_ID = "cal@example.com";
     process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -183,3 +185,120 @@ const pendingMapping = {
   location: "The Park",
   emailPending: true,
 };
+
+describe("pollScheduledEvents builders-only events", () => {
+  const privateEvent = { ...allDayEvent, visibility: "private", description: "Bring droids" };
+  const channelsPostedTo = () => vi.mocked(postChannelMessage).mock.calls.map((call) => call[0]);
+  const embedTitle = (call = 0) => (vi.mocked(postChannelMessage).mock.calls[call][1] as any).embeds[0].title;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.DISCORD_GUILD_ID = "guild";
+    process.env.DISCORD_ANNOUNCEMENT_CHANNEL_ID = "events";
+    process.env.DISCORD_BUILDERS_CHANNEL_ID = "builders";
+    process.env.GOOGLE_CALENDAR_ID = "cal@example.com";
+    process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getEventMapping).mockResolvedValue(undefined);
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [privateEvent], nextSyncToken: "next" });
+  });
+
+  it("announces a private event only in the builders channel, labelled, with no Scheduled Event", async () => {
+    await handler({}, fakeResponse());
+
+    expect(createGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(channelsPostedTo()).toEqual(["builders"]);
+    const message = vi.mocked(postChannelMessage).mock.calls[0][1] as any;
+    expect(message.embeds[0].title).toBe("📅 New event: Droid Day (BUILDERS ONLY)");
+    expect(message.embeds[0].description).toMatch(/^This is a Bay Area Droid Builders Members only event announcement\. Do Not Share!\n\nBring droids$/);
+    expect(message.components).toHaveLength(1);
+    const saved = vi.mocked(saveEventMapping).mock.calls[0][1];
+    expect(saved).toMatchObject({ buildersOnly: true, summary: "Droid Day (BUILDERS ONLY)", emailPending: true });
+    expect(saved.discordEventId).toBeUndefined();
+  });
+
+  it("posts a private event nowhere in Discord when no builders channel is set", async () => {
+    delete process.env.DISCORD_BUILDERS_CHANNEL_ID;
+
+    await handler({}, fakeResponse());
+
+    expect(postChannelMessage).not.toHaveBeenCalled();
+    expect(createGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ emailPending: true }));
+  });
+
+  it("deletes the Scheduled Event of an event made private after it was mirrored, and announces it to builders", async () => {
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, description: "Bring droids", emailPending: false });
+
+    await handler({}, fakeResponse());
+
+    expect(deleteGuildScheduledEvent).toHaveBeenCalledWith("guild", "discord-event");
+    expect(updateGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(channelsPostedTo()).toEqual(["builders"]);
+    expect(embedTitle()).toBe("📅 New event: Droid Day (BUILDERS ONLY)");
+    const saved = vi.mocked(saveEventMapping).mock.calls[0][1];
+    expect(saved.buildersOnly).toBe(true);
+    expect(saved.discordEventId).toBeUndefined();
+  });
+
+  it("creates a Scheduled Event and announces in #events when a builders-only event goes public", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ ...privateEvent, visibility: "default" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({
+      ...pendingMapping,
+      discordEventId: undefined,
+      buildersOnly: true,
+      summary: "Droid Day (BUILDERS ONLY)",
+    });
+
+    await handler({}, fakeResponse());
+
+    expect(createGuildScheduledEvent).toHaveBeenCalledTimes(1);
+    expect(channelsPostedTo()).toEqual(["events"]);
+    expect(embedTitle()).toBe("📅 New event: Droid Day");
+    expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ buildersOnly: false, discordEventId: "discord-event" }));
+  });
+
+  it("posts updates to a builders-only event in the builders channel", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ ...privateEvent, location: "The Shop" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({
+      ...pendingMapping,
+      discordEventId: undefined,
+      buildersOnly: true,
+      summary: "Droid Day (BUILDERS ONLY)",
+      description: "This is a Bay Area Droid Builders Members only event announcement. Do Not Share!\n\nBring droids",
+    });
+
+    await handler({}, fakeResponse());
+
+    expect(updateGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(createGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(channelsPostedTo()).toEqual(["builders"]);
+    expect(embedTitle()).toBe("🔄 EVENT UPDATE: Droid Day (BUILDERS ONLY)");
+  });
+
+  it("posts a builders-only cancellation in the builders channel only", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({
+      ...pendingMapping,
+      discordEventId: undefined,
+      buildersOnly: true,
+      summary: "Droid Day (BUILDERS ONLY)",
+    });
+
+    await handler({}, fakeResponse());
+
+    expect(updateGuildScheduledEvent).not.toHaveBeenCalled();
+    expect(channelsPostedTo()).toEqual(["builders"]);
+    expect(embedTitle()).toBe("🚫 EVENT CANCELLED: Droid Day (BUILDERS ONLY)");
+  });
+
+  it("doesn't treat an event mirrored before builders-only existed as changed", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ ...allDayEvent, location: "The Park" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, startIso: "2026-10-25", endIso: "2026-10-26", emailPending: false });
+
+    await handler({}, fakeResponse());
+
+    expect(postChannelMessage).not.toHaveBeenCalled();
+    expect(saveEventMapping).not.toHaveBeenCalled();
+  });
+});

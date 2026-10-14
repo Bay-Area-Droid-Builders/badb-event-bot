@@ -8,12 +8,15 @@ import { getDiscordLink, getRsvp, listRsvpsForEvent, saveRsvp } from "./rsvpStor
 // For them, Interested counts as Attending, and un-clicking it takes them
 // back off. An RSVP made on the page always wins over Interested.
 export async function syncDiscordInterest(guildId: string, now = Date.now()): Promise<number> {
-  const upcoming = (await listActiveEventMappings()).filter((m) => new Date(m.endIso || m.startIso).getTime() > now);
+  // Builders-only events have no Discord Scheduled Event to click.
+  const upcoming = (await listActiveEventMappings()).filter(
+    (m) => m.discordEventId && new Date(m.endIso || m.startIso).getTime() > now,
+  );
   let changed = 0;
 
   for (const mapping of upcoming) {
     try {
-      changed += await syncEvent(guildId, mapping.calendarEventId, mapping.discordEventId);
+      changed += await syncEvent(guildId, mapping.calendarEventId, mapping.discordEventId!);
     } catch (err) {
       console.error(`Failed to sync Discord interest for calendar event ${mapping.calendarEventId}`, err);
     }

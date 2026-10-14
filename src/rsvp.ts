@@ -3,6 +3,7 @@ import { join } from "path";
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import type { calendar_v3 } from "googleapis";
+import { labelBuildersOnly } from "./buildersOnly";
 import { buildRsvpConfirmEmail } from "./eventEmails";
 import { getCalendarEvent } from "./googleCalendar";
 import { sendEmail } from "./mailer";
@@ -90,7 +91,8 @@ function hasEnded(event: calendar_v3.Schema$Event, now = Date.now()): boolean {
 
 // Loads the event, or renders why it can't be RSVPed to and returns undefined.
 async function loadOpenEvent(res: Response, calendarId: string, eventId: string | undefined): Promise<calendar_v3.Schema$Event | undefined> {
-  const event = eventId ? await getCalendarEvent(calendarId, eventId) : undefined;
+  const found = eventId ? await getCalendarEvent(calendarId, eventId) : undefined;
+  const event = found && labelBuildersOnly(found);
   if (!event) {
     sendHtml(res, 404, renderMessagePage("Event not found", "This RSVP link doesn't match any event on the calendar."));
     return undefined;

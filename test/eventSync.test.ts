@@ -23,7 +23,7 @@ vi.mock("@google-cloud/firestore", () => {
   return { Firestore };
 });
 
-import { acquirePollLock, POLL_LOCK_LEASE_MS, releasePollLock } from "../src/eventSync";
+import { acquirePollLock, POLL_LOCK_LEASE_MS, releasePollLock, saveEventMapping } from "../src/eventSync";
 
 const NOW = 1_800_000_000_000;
 
@@ -60,5 +60,25 @@ describe("poll lock", () => {
 
     expect(current).toBeTruthy();
     await expect(acquirePollLock(NOW + POLL_LOCK_LEASE_MS + 2)).resolves.toBeUndefined();
+  });
+});
+
+describe("saveEventMapping", () => {
+  beforeEach(() => docs.clear());
+
+  it("drops undefined fields, which Firestore rejects", async () => {
+    await saveEventMapping("cal-1", {
+      discordEventId: undefined,
+      status: "active",
+      summary: "Build Night (BUILDERS ONLY)",
+      description: "",
+      startIso: "2099-10-25",
+      endIso: "2099-10-26",
+      location: "",
+      buildersOnly: true,
+    });
+
+    expect(docs.get("calendarEvents/cal-1")).not.toHaveProperty("discordEventId");
+    expect(docs.get("calendarEvents/cal-1")).toMatchObject({ buildersOnly: true });
   });
 });
