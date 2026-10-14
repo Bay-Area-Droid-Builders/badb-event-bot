@@ -1,0 +1,65 @@
+name: Test and deploy
+
+# Pull requests run the tests. Merges to main run them again, then deploy
+# every function. Deploys sign in to Google Cloud through Workload Identity
+# Federation, which only trusts runs on this repo's main branch.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and a newer merge waits rather than cancelling a
+# deploy halfway through.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit -p .
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        function: [form-submit, interactions, poll-scheduled-events, send-event-digest, rsvp]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/660206797790/locations/global/workloadIdentityPools/github/providers/badb-event-bot
+          service_account: github-deployer@badb-event-bot.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Write .env.yaml from repository secrets
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: node scripts/write-env-yaml.mjs
+      # gcloud prints the function's whole config, env vars included, by
+      # default. Only the state and revision are printed here.
+      - name: Deploy ${{ matrix.function }}
+        run: npm run deploy:${{ matrix.function }} -- --quiet --format="value(state,serviceConfig.revision)"
