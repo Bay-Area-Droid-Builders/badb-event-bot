@@ -6,7 +6,7 @@ export interface CalendarChanges {
   nextSyncToken: string;
 }
 
-function httpStatus(err: any): number | undefined {
+export function httpStatus(err: any): number | undefined {
   return err?.status ?? err?.response?.status ?? (err?.code ? Number(err.code) : undefined);
 }
 
@@ -89,4 +89,16 @@ export async function createCalendarEvent(params: {
 
   if (!res.data.id) throw new Error("Calendar API did not return an event id");
   return res.data.id;
+}
+
+// Returns undefined when the event doesn't exist (a bad or stale RSVP link).
+export async function getCalendarEvent(calendarId: string, eventId: string): Promise<calendar_v3.Schema$Event | undefined> {
+  const calendar = await getCalendarClient();
+  try {
+    const res = await calendar.events.get({ calendarId, eventId });
+    return res.data;
+  } catch (err) {
+    if (httpStatus(err) === 404 || httpStatus(err) === 410) return undefined;
+    throw err;
+  }
 }

@@ -56,3 +56,21 @@ export async function editMessage(channelId: string, messageId: string, body: un
   });
   return res.json();
 }
+
+// The IDs of everyone who clicked "Interested" on a Scheduled Event. Discord
+// pages this by user ID, at most 100 per call.
+export async function listScheduledEventUserIds(guildId: string, eventId: string): Promise<string[]> {
+  const ids: string[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const query = new URLSearchParams({ limit: "100", ...(after ? { after } : {}) });
+    const res = await discordFetch(`/guilds/${guildId}/scheduled-events/${eventId}/users?${query}`, {
+      method: "GET",
+      headers: botHeaders(),
+    });
+    const page: { user: { id: string } }[] = await res.json();
+    ids.push(...page.map((entry) => entry.user.id));
+    if (page.length < 100) return ids;
+    after = page[page.length - 1].user.id;
+  }
+}

@@ -3,6 +3,7 @@ import type { Request, Response } from "@google-cloud/functions-framework";
 import { verifyKey } from "discord-interactions";
 import { editMessage } from "./discordApi";
 import { handleEventRequestAction } from "./eventRequestActions";
+import { parseRsvpCustomId, rsvpLinkReply } from "./rsvpButtons";
 
 const InteractionType = { PING: 1, MESSAGE_COMPONENT: 3 };
 const InteractionResponseType = {
@@ -39,6 +40,15 @@ http("interactions", async (req: Request, res: Response) => {
 
   if (interaction.type !== InteractionType.MESSAGE_COMPONENT) {
     res.status(400).send("Unsupported interaction type");
+    return;
+  }
+
+  // RSVP buttons on #events announcements reply straight away with a private
+  // link — building it needs no I/O, so it fits easily in Discord's 3 seconds.
+  const rsvp = parseRsvpCustomId(interaction.data?.custom_id);
+  const user = interaction.member?.user ?? interaction.user;
+  if (rsvp && user?.id) {
+    res.status(200).json(rsvpLinkReply(rsvp.status, rsvp.calendarEventId, user));
     return;
   }
 

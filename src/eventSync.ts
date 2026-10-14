@@ -18,6 +18,14 @@ export interface EventMapping {
   startIso: string;
   endIso: string;
   location: string;
+  // Set when the event is first mirrored and cleared once its announcement
+  // email has gone to the mailing list, so a failed send is retried on the
+  // next poll. Absent on events mirrored before these emails existed.
+  emailPending?: boolean;
+}
+
+export interface StoredEventMapping extends EventMapping {
+  calendarEventId: string;
 }
 
 export async function getSyncToken(): Promise<string | undefined> {
@@ -36,6 +44,23 @@ export async function getEventMapping(calendarEventId: string): Promise<EventMap
 
 export async function saveEventMapping(calendarEventId: string, mapping: EventMapping): Promise<void> {
   await firestore.collection(EVENTS_COLLECTION).doc(calendarEventId).set(mapping);
+}
+
+export async function setEmailPending(calendarEventId: string, emailPending: boolean): Promise<void> {
+  await firestore.collection(EVENTS_COLLECTION).doc(calendarEventId).set({ emailPending }, { merge: true });
+}
+
+async function queryMappings(field: string, value: unknown): Promise<StoredEventMapping[]> {
+  const snap = await firestore.collection(EVENTS_COLLECTION).where(field, "==", value).get();
+  return snap.docs.map((doc) => ({ ...(doc.data() as EventMapping), calendarEventId: doc.id }));
+}
+
+export function listActiveEventMappings(): Promise<StoredEventMapping[]> {
+  return queryMappings("status", "active");
+}
+
+export function listEventMappingsPendingEmail(): Promise<StoredEventMapping[]> {
+  return queryMappings("emailPending", true);
 }
 
 // Two overlapping poll runs (e.g. a manual `gcloud scheduler jobs run`

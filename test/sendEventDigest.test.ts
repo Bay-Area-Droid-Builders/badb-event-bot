@@ -89,3 +89,29 @@ describe("sendEventDigest cadence", () => {
     expect(await run()).toMatch(/^sent/);
   });
 });
+
+describe("sendEventDigest content", () => {
+  beforeEach(() => {
+    docs.clear();
+    sendMail.mockReset();
+    list.mockReset().mockResolvedValue({ data: { items: [{ id: "cal-1", ...upcoming[0] }] } });
+    process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
+  });
+
+  it("gives each event in the email RSVP links, but leaves them out of the Discord post", async () => {
+    const { postChannelMessage } = await import("../src/discordApi");
+    vi.mocked(postChannelMessage).mockClear();
+
+    await run({ to: "me@example.com" });
+
+    const email = sendMail.mock.calls[0][0];
+    expect(email.text).toContain("RSVP: https://rsvp.example.com/badb-rsvp?event=cal-1");
+    for (const [label, status] of [["Attending", "attending"], ["Maybe", "maybe"], ["Decline", "declined"]]) {
+      expect(email.html).toContain(`href="https://rsvp.example.com/badb-rsvp?event=cal-1&amp;status=${status}"`);
+      expect(email.html).toContain(`>${label}</a>`);
+    }
+    const discordText = (vi.mocked(postChannelMessage).mock.calls[0][1] as any).embeds[0].description;
+    expect(discordText).toContain("Droid Day");
+    expect(discordText).not.toContain("RSVP");
+  });
+});
