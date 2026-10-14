@@ -82,11 +82,6 @@ function wrapText(intro: string, body: string): string {
 
 const DIGEST_INTRO = "Here's your digest of the upcoming events for the Bay Area Droid Builders:";
 
-// The digest's text for the Discord post: the same message, minus RSVP links.
-export function buildDigestDiscordText(events: calendar_v3.Schema$Event[]): string {
-  return wrapText(DIGEST_INTRO, events.map(eventText).join("\n\n"));
-}
-
 // Callers only invoke this with a non-empty list — sendEventDigest skips
 // sending entirely when there's nothing upcoming.
 export function buildDigestEmail(events: calendar_v3.Schema$Event[], to: string): Email {

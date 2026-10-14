@@ -41,8 +41,9 @@ adds them to the Calendar event's guest list.
   Calendar (see **RSVPs** below).
 - **`sendEventDigest`** (Cloud Function, run weekly via Cloud Scheduler but
   only actually sends every other run — see below): lists upcoming Calendar
-  events, posts the list to `#events`, and emails the same list, with RSVP
-  links, to the R2SF Google Group via Gmail SMTP.
+  events and emails the list, with RSVP links, to the R2SF Google Group via
+  Gmail SMTP. It doesn't post to Discord — `#events` only gets new-event
+  announcements.
 - **`rsvp`** (Cloud Function, public): the RSVP page. See **RSVPs** below.
 
 ## RSVPs
