@@ -70,18 +70,30 @@ describe("interactions", () => {
     expect(editMessage).not.toHaveBeenCalled();
   });
 
-  it("takes the buttons off a cancelled event's post instead of giving an RSVP link", async () => {
+  it("marks a cancelled event's post cancelled instead of giving an RSVP link", async () => {
     vi.mocked(editMessage).mockClear();
     vi.mocked(getEventMapping).mockResolvedValueOnce({ status: "cancelled" } as any);
     const res = fakeResponse();
+    const announcement = {
+      id: "1290000000000000001",
+      embeds: [{ title: "📅 New event: Droid Day", color: 0x2ecc71, fields: [{ name: "When", value: "Oct 25, 2026" }] }],
+    };
 
     await handler(
-      fakeRequest({ ...componentClick, data: { custom_id: "rsvp:attending:cal-1" }, member: { user: { id: "user-r2", username: "r2d2" } } }),
+      fakeRequest({
+        ...componentClick,
+        message: announcement,
+        data: { custom_id: "rsvp:attending:cal-1" },
+        member: { user: { id: "user-r2", username: "r2d2" } },
+      }),
       res,
     );
 
     expect(getEventMapping).toHaveBeenCalledWith("cal-1");
-    expect(editMessage).toHaveBeenCalledWith("chan", "1290000000000000001", { components: [] });
+    expect(editMessage).toHaveBeenCalledWith("chan", "1290000000000000001", {
+      embeds: [{ title: "🚫 CANCELLED: Droid Day", color: 0xe74c3c, fields: [{ name: "When", value: "Oct 25, 2026" }] }],
+      components: [],
+    });
     const reply = res.json.mock.calls[0][0];
     expect(reply.data.flags).toBe(64);
     expect(reply.data.content).toContain("cancelled");

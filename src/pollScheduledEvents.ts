@@ -2,6 +2,7 @@ import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import type { calendar_v3 } from "googleapis";
 import { isBuildersOnly, labelBuildersOnly } from "./buildersOnly";
+import { CANCELLED_COLOR, cancelledTitle, NEW_EVENT_TITLE_PREFIX } from "./cancelledAnnouncement";
 import { createGuildScheduledEvent, deleteGuildScheduledEvent, editMessage, postChannelMessage, updateGuildScheduledEvent } from "./discordApi";
 import { syncDiscordInterest } from "./discordInterest";
 import { buildNewEventEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
@@ -103,7 +104,7 @@ async function syncScheduledEvent(guildId: string, discordEventId: string | unde
   return created.id;
 }
 
-function eventEmbed(title: string, color: number, fields: EventFields): object {
+function eventEmbed(title: string, color: number, fields: Omit<EventFields, "buildersOnly">): object {
   return {
     title,
     description: fields.description || undefined,
@@ -119,7 +120,7 @@ function newEventMessage(calendarEventId: string, fields: EventFields): object {
   const rsvpButtons = rsvpButtonRow(calendarEventId);
   return {
     ...(rsvpButtons ? { components: [rsvpButtons] } : {}),
-    embeds: [eventEmbed(`📅 New event: ${fields.summary}`, 0x2ecc71, fields)],
+    embeds: [eventEmbed(`${NEW_EVENT_TITLE_PREFIX}${fields.summary}`, 0x2ecc71, fields)],
   };
 }
 
@@ -131,17 +132,30 @@ async function announce(channelId: string | undefined, calendarEventId: string, 
   return message?.id ? { announcementChannelId: channelId, announcementMessageId: message.id as string } : undefined;
 }
 
-// Takes the RSVP buttons off a cancelled event's announcement. Best effort:
-// the post may have been deleted by hand, and the cancellation shouldn't
-// fail over it. Buttons on posts that weren't saved are removed when
-// someone clicks them instead (see src/interactions.ts).
-async function removeRsvpButtons(mapping: EventMapping): Promise<void> {
+// Marks a cancelled event's announcement as cancelled and takes its RSVP
+// buttons off, rebuilt from the mapping since that's what it was posted
+// from. Best effort: the post may have been deleted by hand, and the
+// cancellation shouldn't fail over it. Posts that weren't saved are marked
+// when someone clicks a button instead (see src/interactions.ts).
+async function markAnnouncementCancelled(mapping: EventMapping): Promise<void> {
   if (!mapping.announcementChannelId || !mapping.announcementMessageId) return;
+  const embed = eventEmbed(cancelledTitle(mapping.summary), CANCELLED_COLOR, mapping);
   try {
-    await editMessage(mapping.announcementChannelId, mapping.announcementMessageId, { components: [] });
+    await editMessage(mapping.announcementChannelId, mapping.announcementMessageId, { embeds: [embed], components: [] });
   } catch (err) {
-    console.error(`Failed to remove RSVP buttons from message ${mapping.announcementMessageId}`, err);
+    console.error(`Failed to mark announcement ${mapping.announcementMessageId} cancelled`, err);
   }
+}
+
+// The cancellation notice, posted as a reply to the announcement when
+// that's in the same channel, so the two are linked. Editing the
+// announcement alone wouldn't notify anyone.
+function cancellationMessage(mapping: EventMapping, channelId: string | undefined): object {
+  const replyTo =
+    mapping.announcementMessageId && mapping.announcementChannelId === channelId
+      ? { message_reference: { message_id: mapping.announcementMessageId, fail_if_not_exists: false } }
+      : {};
+  return { ...replyTo, embeds: [{ title: `🚫 EVENT CANCELLED: ${mapping.summary}`, color: CANCELLED_COLOR }] };
 }
 
 async function syncCalendarToDiscord(guildId: string, channels: Channels, calendarId: string): Promise<string> {
@@ -163,10 +177,9 @@ async function syncCalendarToDiscord(guildId: string, channels: Channels, calend
           if (mapping.discordEventId) {
             await updateGuildScheduledEvent(guildId, mapping.discordEventId, { status: EVENT_STATUS_CANCELED });
           }
-          await postTo(channelFor(channels, mapping.buildersOnly), {
-            embeds: [{ title: `🚫 EVENT CANCELLED: ${mapping.summary}`, color: 0xe74c3c }],
-          });
-          await removeRsvpButtons(mapping);
+          const channelId = channelFor(channels, mapping.buildersOnly);
+          await postTo(channelId, cancellationMessage(mapping, channelId));
+          await markAnnouncementCancelled(mapping);
           await saveEventMapping(event.id, { ...mapping, status: "cancelled", emailPending: false });
           cancelled++;
         }

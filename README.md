@@ -243,10 +243,12 @@ Discord and the `#events` announcement follow within the next
 - Cancelling/deleting a Calendar event marks the mirrored Discord event
   **CANCELED** rather than deleting it, so it stays visible (greyed out) to
   anyone who had saved it.
-- Cancelling an event also takes the RSVP buttons off its announcement.
-  Announcements posted before the bot saved their message IDs lose their
-  buttons the first time someone clicks one, and that person is told the
-  event was cancelled.
+- Cancelling an event also marks its announcement cancelled (retitled
+  "🚫 CANCELLED", turned red, RSVP buttons removed), and the "EVENT
+  CANCELLED" message is posted as a reply to it. Announcements posted
+  before the bot saved their message IDs are marked the first time someone
+  clicks one of their buttons, and that person is told the event was
+  cancelled.
 - If you ever want role-gating on who can click the admin buttons, the
   member's roles are available on `interaction.member.roles` inside the
   handler.

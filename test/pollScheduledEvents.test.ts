@@ -341,14 +341,47 @@ describe("pollScheduledEvents RSVP buttons on cancelled events", () => {
     );
   });
 
-  it("takes the RSVP buttons off the announcement when the event is cancelled", async () => {
+  it("marks the announcement cancelled and takes its RSVP buttons off", async () => {
     vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
     vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, announcementChannelId: "events", announcementMessageId: "message-1" });
 
     await handler({}, fakeResponse());
 
-    expect(editMessage).toHaveBeenCalledWith("events", "message-1", { components: [] });
+    const [channelId, messageId, edit] = vi.mocked(editMessage).mock.calls[0] as [string, string, any];
+    expect([channelId, messageId]).toEqual(["events", "message-1"]);
+    expect(edit.components).toEqual([]);
+    expect(edit.embeds[0]).toMatchObject({ title: "🚫 CANCELLED: Droid Day", color: 0xe74c3c });
+    expect(edit.embeds[0].fields).toEqual([
+      { name: "When", value: "Oct 25, 2099", inline: true },
+      { name: "Where", value: "The Park", inline: true },
+    ]);
     expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ status: "cancelled" }));
+  });
+
+  it("posts the cancellation as a reply to the announcement", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, announcementChannelId: "events", announcementMessageId: "message-1" });
+
+    await handler({}, fakeResponse());
+
+    expect(postChannelMessage).toHaveBeenCalledWith("events", {
+      message_reference: { message_id: "message-1", fail_if_not_exists: false },
+      embeds: [{ title: "🚫 EVENT CANCELLED: Droid Day", color: 0xe74c3c }],
+    });
+  });
+
+  it("posts the cancellation without a reply when the announcement is in another channel", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({
+      ...pendingMapping,
+      buildersOnly: true,
+      announcementChannelId: "events",
+      announcementMessageId: "message-1",
+    });
+
+    await handler({}, fakeResponse());
+
+    expect(postChannelMessage).toHaveBeenCalledWith("builders", { embeds: [{ title: "🚫 EVENT CANCELLED: Droid Day", color: 0xe74c3c }] });
   });
 
   it("still cancels the event when the announcement can't be edited", async () => {
