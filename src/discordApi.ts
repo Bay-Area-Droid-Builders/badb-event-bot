@@ -9,13 +9,39 @@ function botHeaders(): Record<string, string> {
   };
 }
 
+// Discord rate-limits each route and answers 429 with how long to wait.
+// The poller checks "Interested" on every upcoming event back to back, which
+// runs past the limit once there are more than a handful of events. Waits
+// that long and tries again, unless the wait wouldn't fit in a function run.
+const MAX_RATE_LIMIT_RETRIES = 3;
+export const MAX_RATE_LIMIT_WAIT_MS = 10_000;
+
+// How long a 429 says to wait, from its body (`retry_after`, in seconds),
+// or else its Retry-After header.
+async function retryAfterMs(res: Response): Promise<number | undefined> {
+  const body = await res.clone().json().catch(() => undefined);
+  const seconds = Number(body?.retry_after ?? res.headers.get("retry-after") ?? NaN);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1000) : undefined;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function discordFetch(path: string, init: RequestInit): Promise<Response> {
-  const res = await fetch(`${API_BASE}${path}`, init);
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Discord API ${init.method ?? "GET"} ${path} -> ${res.status}: ${body}`);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${API_BASE}${path}`, init);
+    if (res.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      const waitMs = await retryAfterMs(res);
+      if (waitMs !== undefined && waitMs <= MAX_RATE_LIMIT_WAIT_MS) {
+        await sleep(waitMs);
+        continue;
+      }
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Discord API ${init.method ?? "GET"} ${path} -> ${res.status}: ${body}`);
+    }
+    return res;
   }
-  return res;
 }
 
 export async function postChannelMessage(channelId: string, body: unknown): Promise<any> {
