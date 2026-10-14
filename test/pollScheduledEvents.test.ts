@@ -20,12 +20,13 @@ vi.mock("../src/rsvpCalendar", () => ({ syncPendingRsvps: vi.fn(async () => 0) }
 vi.mock("../src/discordApi", () => ({
   createGuildScheduledEvent: vi.fn(async () => ({ id: "discord-event" })),
   deleteGuildScheduledEvent: vi.fn(async () => {}),
+  editMessage: vi.fn(async () => ({})),
   updateGuildScheduledEvent: vi.fn(async () => ({})),
   postChannelMessage: vi.fn(async () => ({})),
 }));
 
 import "../src/pollScheduledEvents";
-import { createGuildScheduledEvent, deleteGuildScheduledEvent, postChannelMessage, updateGuildScheduledEvent } from "../src/discordApi";
+import { createGuildScheduledEvent, deleteGuildScheduledEvent, editMessage, postChannelMessage, updateGuildScheduledEvent } from "../src/discordApi";
 import { syncDiscordInterest } from "../src/discordInterest";
 import { acquirePollLock, getEventMapping, listEventMappingsPendingEmail, releasePollLock, saveEventMapping, setEmailPending } from "../src/eventSync";
 import { listCalendarChanges } from "../src/googleCalendar";
@@ -300,5 +301,73 @@ describe("pollScheduledEvents builders-only events", () => {
 
     expect(postChannelMessage).not.toHaveBeenCalled();
     expect(saveEventMapping).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollScheduledEvents RSVP buttons on cancelled events", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.DISCORD_GUILD_ID = "guild";
+    process.env.DISCORD_ANNOUNCEMENT_CHANNEL_ID = "events";
+    process.env.DISCORD_BUILDERS_CHANNEL_ID = "builders";
+    process.env.GOOGLE_CALENDAR_ID = "cal@example.com";
+    process.env.RSVP_PAGE_URL = "https://rsvp.example.com/badb-rsvp";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getEventMapping).mockResolvedValue(undefined);
+  });
+
+  it("saves where a new event was announced", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [allDayEvent], nextSyncToken: "next" });
+    vi.mocked(postChannelMessage).mockResolvedValueOnce({ id: "message-1" });
+
+    await handler({}, fakeResponse());
+
+    expect(saveEventMapping).toHaveBeenCalledWith(
+      "cal-1",
+      expect.objectContaining({ announcementChannelId: "events", announcementMessageId: "message-1" }),
+    );
+  });
+
+  it("saves the new announcement when an event moves to the builders channel", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ ...allDayEvent, visibility: "private" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, announcementChannelId: "events", announcementMessageId: "old" });
+    vi.mocked(postChannelMessage).mockResolvedValueOnce({ id: "message-2" });
+
+    await handler({}, fakeResponse());
+
+    expect(saveEventMapping).toHaveBeenCalledWith(
+      "cal-1",
+      expect.objectContaining({ announcementChannelId: "builders", announcementMessageId: "message-2" }),
+    );
+  });
+
+  it("takes the RSVP buttons off the announcement when the event is cancelled", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, announcementChannelId: "events", announcementMessageId: "message-1" });
+
+    await handler({}, fakeResponse());
+
+    expect(editMessage).toHaveBeenCalledWith("events", "message-1", { components: [] });
+    expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ status: "cancelled" }));
+  });
+
+  it("still cancels the event when the announcement can't be edited", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue({ ...pendingMapping, announcementChannelId: "events", announcementMessageId: "gone" });
+    vi.mocked(editMessage).mockRejectedValueOnce(new Error("Unknown Message"));
+
+    await handler({}, fakeResponse());
+
+    expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ status: "cancelled" }));
+  });
+
+  it("cancels an event announced before announcements were saved without editing anything", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({ events: [{ id: "cal-1", status: "cancelled" }], nextSyncToken: "next" });
+    vi.mocked(getEventMapping).mockResolvedValue(pendingMapping);
+
+    await handler({}, fakeResponse());
+
+    expect(editMessage).not.toHaveBeenCalled();
+    expect(saveEventMapping).toHaveBeenCalledWith("cal-1", expect.objectContaining({ status: "cancelled" }));
   });
 });

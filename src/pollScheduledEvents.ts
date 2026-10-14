@@ -2,7 +2,7 @@ import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import type { calendar_v3 } from "googleapis";
 import { isBuildersOnly, labelBuildersOnly } from "./buildersOnly";
-import { createGuildScheduledEvent, deleteGuildScheduledEvent, postChannelMessage, updateGuildScheduledEvent } from "./discordApi";
+import { createGuildScheduledEvent, deleteGuildScheduledEvent, editMessage, postChannelMessage, updateGuildScheduledEvent } from "./discordApi";
 import { syncDiscordInterest } from "./discordInterest";
 import { buildNewEventEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
 import {
@@ -123,6 +123,27 @@ function newEventMessage(calendarEventId: string, fields: EventFields): object {
   };
 }
 
+// Posts the new-event announcement and returns where it went, for the
+// event's mapping.
+async function announce(channelId: string | undefined, calendarEventId: string, fields: EventFields) {
+  if (!channelId) return undefined;
+  const message = await postChannelMessage(channelId, newEventMessage(calendarEventId, fields));
+  return message?.id ? { announcementChannelId: channelId, announcementMessageId: message.id as string } : undefined;
+}
+
+// Takes the RSVP buttons off a cancelled event's announcement. Best effort:
+// the post may have been deleted by hand, and the cancellation shouldn't
+// fail over it. Buttons on posts that weren't saved are removed when
+// someone clicks them instead (see src/interactions.ts).
+async function removeRsvpButtons(mapping: EventMapping): Promise<void> {
+  if (!mapping.announcementChannelId || !mapping.announcementMessageId) return;
+  try {
+    await editMessage(mapping.announcementChannelId, mapping.announcementMessageId, { components: [] });
+  } catch (err) {
+    console.error(`Failed to remove RSVP buttons from message ${mapping.announcementMessageId}`, err);
+  }
+}
+
 async function syncCalendarToDiscord(guildId: string, channels: Channels, calendarId: string): Promise<string> {
   const syncToken = await getSyncToken();
   const { events, nextSyncToken } = await listCalendarChanges(calendarId, syncToken);
@@ -145,6 +166,7 @@ async function syncCalendarToDiscord(guildId: string, channels: Channels, calend
           await postTo(channelFor(channels, mapping.buildersOnly), {
             embeds: [{ title: `🚫 EVENT CANCELLED: ${mapping.summary}`, color: 0xe74c3c }],
           });
+          await removeRsvpButtons(mapping);
           await saveEventMapping(event.id, { ...mapping, status: "cancelled", emailPending: false });
           cancelled++;
         }
@@ -155,21 +177,23 @@ async function syncCalendarToDiscord(guildId: string, channels: Channels, calend
 
       if (!mapping) {
         const discordEventId = await syncScheduledEvent(guildId, undefined, fields);
-        await postTo(channelFor(channels, fields.buildersOnly), newEventMessage(event.id, fields));
+        const announcement = await announce(channelFor(channels, fields.buildersOnly), event.id, fields);
         // The announcement email goes out from sendPendingEventEmails, right
         // after this loop, so a failed send gets retried on later polls.
-        await saveEventMapping(event.id, { discordEventId, status: "active", ...fields, emailPending: true });
+        await saveEventMapping(event.id, { discordEventId, status: "active", ...fields, ...announcement, emailPending: true });
         created++;
       } else if (hasMeaningfulChange(mapping, fields)) {
         const discordEventId = await syncScheduledEvent(guildId, mapping.discordEventId, fields);
         // An event that just switched between public and builders-only has
         // never been posted in its new channel, so it's announced there as new.
-        const message =
-          !!mapping.buildersOnly !== fields.buildersOnly
-            ? newEventMessage(event.id, fields)
-            : { embeds: [eventEmbed(`🔄 EVENT UPDATE: ${fields.summary}`, 0xf1c40f, fields)] };
-        await postTo(channelFor(channels, fields.buildersOnly), message);
-        await saveEventMapping(event.id, { ...mapping, status: "active", ...fields, discordEventId });
+        const channelId = channelFor(channels, fields.buildersOnly);
+        let announcement;
+        if (!!mapping.buildersOnly !== fields.buildersOnly) {
+          announcement = await announce(channelId, event.id, fields);
+        } else {
+          await postTo(channelId, { embeds: [eventEmbed(`🔄 EVENT UPDATE: ${fields.summary}`, 0xf1c40f, fields)] });
+        }
+        await saveEventMapping(event.id, { ...mapping, status: "active", ...fields, discordEventId, ...announcement });
         updated++;
       }
     } catch (err) {

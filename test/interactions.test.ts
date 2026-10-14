@@ -9,6 +9,7 @@ vi.mock("../src/discordApi", () => ({
     events.push("editMessage");
   }),
 }));
+vi.mock("../src/eventSync", () => ({ getEventMapping: vi.fn(async () => undefined) }));
 vi.mock("../src/eventRequestActions", () => ({
   handleEventRequestAction: vi.fn(async () => {
     events.push("handleEventRequestAction");
@@ -18,6 +19,7 @@ vi.mock("../src/eventRequestActions", () => ({
 
 import "../src/interactions";
 import { editMessage } from "../src/discordApi";
+import { getEventMapping } from "../src/eventSync";
 
 const handler = getFunction("interactions") as (req: any, res: any) => Promise<void>;
 
@@ -66,6 +68,45 @@ describe("interactions", () => {
     expect(reply.data.flags).toBe(64);
     expect(reply.data.components[0].components[0].url).toContain("event=cal-1");
     expect(editMessage).not.toHaveBeenCalled();
+  });
+
+  it("takes the buttons off a cancelled event's post instead of giving an RSVP link", async () => {
+    vi.mocked(editMessage).mockClear();
+    vi.mocked(getEventMapping).mockResolvedValueOnce({ status: "cancelled" } as any);
+    const res = fakeResponse();
+
+    await handler(
+      fakeRequest({ ...componentClick, data: { custom_id: "rsvp:attending:cal-1" }, member: { user: { id: "user-r2", username: "r2d2" } } }),
+      res,
+    );
+
+    expect(getEventMapping).toHaveBeenCalledWith("cal-1");
+    expect(editMessage).toHaveBeenCalledWith("chan", "1290000000000000001", { components: [] });
+    const reply = res.json.mock.calls[0][0];
+    expect(reply.data.flags).toBe(64);
+    expect(reply.data.content).toContain("cancelled");
+    expect(reply.data.components).toBeUndefined();
+  });
+
+  it("still tells the clicker a cancelled event is cancelled if removing the buttons fails", async () => {
+    vi.mocked(getEventMapping).mockResolvedValueOnce({ status: "cancelled" } as any);
+    vi.mocked(editMessage).mockRejectedValueOnce(new Error("Missing Access"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = fakeResponse();
+
+    await handler(fakeRequest({ ...componentClick, data: { custom_id: "rsvp:maybe:cal-1" }, user: { id: "user-r2" } }), res);
+
+    expect(res.json.mock.calls[0][0].data.content).toContain("cancelled");
+  });
+
+  it("falls back to the RSVP link when the event lookup fails", async () => {
+    vi.mocked(getEventMapping).mockRejectedValueOnce(new Error("Firestore is down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = fakeResponse();
+
+    await handler(fakeRequest({ ...componentClick, data: { custom_id: "rsvp:maybe:cal-1" }, user: { id: "user-r2" } }), res);
+
+    expect(res.json.mock.calls[0][0].data.components[0].components[0].url).toContain("event=cal-1");
   });
 
   it("finishes the work and updates the message before responding to Discord", async () => {
