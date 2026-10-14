@@ -59,4 +59,14 @@ describe("event emails", () => {
     expect(buildRsvpConfirmEmail(event, "R2", "Maybe", "https://x", "r2@example.com").html).toContain(logo);
     expect(buildNewEventEmail(event, "R2SF@googlegroups.com").html).toContain(logo);
   });
+
+  it("shows an HTML description as plain text, with tags neither rendered raw nor injected", () => {
+    const withHtml = { ...event, description: 'Bring <b>droids</b><br><script>x</script>Info <a href="https://example.com">here</a>' };
+    const email = buildNewEventEmail(withHtml, "R2SF@googlegroups.com");
+
+    expect(email.text).toContain("Bring droids\nxInfo here (https://example.com)");
+    expect(email.html).toContain("Bring droids<br>xInfo here (https://example.com)");
+    expect(email.html).not.toContain("<b>");
+    expect(email.html).not.toContain("<script>");
+  });
 });

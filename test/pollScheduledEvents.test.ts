@@ -87,6 +87,18 @@ describe("pollScheduledEvents", () => {
     );
   });
 
+  it("strips HTML from the description before it reaches Discord", async () => {
+    vi.mocked(listCalendarChanges).mockResolvedValue({
+      events: [{ ...allDayEvent, description: "Bring <b>droids</b><br>and snacks" }],
+      nextSyncToken: "next",
+    });
+
+    await handler({}, fakeResponse());
+
+    expect((vi.mocked(createGuildScheduledEvent).mock.calls[0][1] as any).description).toBe("Bring droids\nand snacks");
+    expect((vi.mocked(postChannelMessage).mock.calls[0][1] as any).embeds[0].description).toBe("Bring droids\nand snacks");
+  });
+
   it("announces a one-day all-day event as that single day", async () => {
     await handler({}, fakeResponse());
 
