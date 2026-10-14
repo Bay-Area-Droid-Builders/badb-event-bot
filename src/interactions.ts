@@ -1,6 +1,7 @@
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import { verifyKey } from "discord-interactions";
+import { cancelledEmbed } from "./cancelledAnnouncement";
 import { editMessage } from "./discordApi";
 import { handleEventRequestAction } from "./eventRequestActions";
 import { getEventMapping } from "./eventSync";
@@ -53,9 +54,9 @@ http("interactions", async (req: Request, res: Response) => {
   const user = interaction.member?.user ?? interaction.user;
   if (rsvp && user?.id) {
     if (await isCancelled(rsvp.calendarEventId)) {
-      // The poller takes the buttons off when an event is cancelled, but
-      // not on posts from before it saved where it announced each event.
-      await removeButtons(channelId, interaction.message?.id);
+      // The poller marks the announcement when an event is cancelled, but
+      // not posts from before it saved where it announced each event.
+      await markCancelled(channelId, interaction.message);
       res.status(200).json(cancelledEventReply());
       return;
     }
@@ -100,11 +101,12 @@ async function isCancelled(calendarEventId: string): Promise<boolean> {
   }
 }
 
-async function removeButtons(channelId: string | undefined, messageId: string | undefined): Promise<void> {
-  if (!channelId || !messageId) return;
+async function markCancelled(channelId: string | undefined, message: { id?: string; embeds?: any[] } | undefined): Promise<void> {
+  if (!channelId || !message?.id) return;
+  const embeds = message.embeds?.length ? [cancelledEmbed(message.embeds[0]), ...message.embeds.slice(1)] : undefined;
   try {
-    await editMessage(channelId, messageId, { components: [] });
+    await editMessage(channelId, message.id, { ...(embeds ? { embeds } : {}), components: [] });
   } catch (err) {
-    console.error(`Failed to remove RSVP buttons from message ${messageId}`, err);
+    console.error(`Failed to mark announcement ${message.id} cancelled`, err);
   }
 }
