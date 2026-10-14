@@ -1,7 +1,7 @@
 import { isRsvpChoice, RSVP_CHOICES, RSVP_LABELS, RsvpChoice, rsvpPageUrl } from "./rsvpLinks";
 import { signToken } from "./signedToken";
 
-// Attending / Maybe / Decline buttons on each #events announcement. A click
+// Attending / Maybe / Decline buttons on each new-event announcement. A click
 // doesn't RSVP by itself: it hands the clicker a private link to the RSVP
 // page, signed with their Discord ID, so whatever they RSVP there gets tied
 // to their Discord account (see src/discordInterest.ts).

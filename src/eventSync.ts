@@ -11,7 +11,8 @@ const SYNC_STATE_DOC = firestore.collection("calendarSync").doc("state");
 const POLL_LOCK_DOC = firestore.collection("calendarSync").doc("pollLock");
 
 export interface EventMapping {
-  discordEventId: string;
+  // Absent for builders-only events, which get no Discord Scheduled Event.
+  discordEventId?: string;
   status: "active" | "cancelled";
   summary: string;
   description: string;
@@ -22,6 +23,9 @@ export interface EventMapping {
   // email has gone to the mailing list, so a failed send is retried on the
   // next poll. Absent on events mirrored before these emails existed.
   emailPending?: boolean;
+  // A private Calendar event (see src/buildersOnly.ts). Absent on events
+  // mirrored before builders-only events existed.
+  buildersOnly?: boolean;
 }
 
 export interface StoredEventMapping extends EventMapping {
@@ -42,8 +46,11 @@ export async function getEventMapping(calendarEventId: string): Promise<EventMap
   return doc.data() as EventMapping | undefined;
 }
 
+// Undefined fields are dropped: Firestore rejects them, and a replaced
+// document should lose them anyway (e.g. a discordEventId that was deleted).
 export async function saveEventMapping(calendarEventId: string, mapping: EventMapping): Promise<void> {
-  await firestore.collection(EVENTS_COLLECTION).doc(calendarEventId).set(mapping);
+  const fields = Object.fromEntries(Object.entries(mapping).filter(([, value]) => value !== undefined));
+  await firestore.collection(EVENTS_COLLECTION).doc(calendarEventId).set(fields);
 }
 
 export async function setEmailPending(calendarEventId: string, emailPending: boolean): Promise<void> {

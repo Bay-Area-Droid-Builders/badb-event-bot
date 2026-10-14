@@ -46,6 +46,31 @@ adds them to the Calendar event's guest list.
   announcements.
 - **`rsvp`** (Cloud Function, public): the RSVP page. See **RSVPs** below.
 
+## Builders-only events
+
+Some events are for Bay Area Droid Builders members only. Add them to the
+same Google Calendar by hand and set the event's visibility to **Private**
+(in the event's details, change "Default visibility" to "Private"). People
+viewing the public calendar then see only "busy" for that time.
+
+For a private event, the bot:
+
+- adds **(BUILDERS ONLY)** to the end of the title and "This is a Bay Area
+  Droid Builders Members only event announcement. Do Not Share!" to the
+  top of the description, in Discord, emails, and the RSVP page. If you
+  type them into the event yourself, they aren't added twice.
+- posts the announcement, updates, and cancellation to the builders
+  channel (`DISCORD_BUILDERS_CHANNEL_ID`) instead of `#events`. With no
+  builders channel set, it posts them nowhere in Discord.
+- doesn't create a Discord Scheduled Event, since the whole server can see
+  those.
+- still emails it to the R2SF list and includes it in the digest.
+
+Making an already-announced public event private deletes its Discord
+Scheduled Event and announces it in the builders channel, but the earlier
+`#events` post stays up, so delete that by hand. Making a private event
+public creates its Scheduled Event and announces it in `#events`.
+
 ## RSVPs
 
 There's one RSVP page for everything. Each event's Discord buttons and email

@@ -1,7 +1,8 @@
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import type { calendar_v3 } from "googleapis";
-import { createGuildScheduledEvent, postChannelMessage, updateGuildScheduledEvent } from "./discordApi";
+import { isBuildersOnly, labelBuildersOnly } from "./buildersOnly";
+import { createGuildScheduledEvent, deleteGuildScheduledEvent, postChannelMessage, updateGuildScheduledEvent } from "./discordApi";
 import { syncDiscordInterest } from "./discordInterest";
 import { buildNewEventEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
 import {
@@ -30,26 +31,99 @@ const EVENT_STATUS_CANCELED = 4;
 const PRIVACY_LEVEL_GUILD_ONLY = 2;
 
 function extractFields(event: calendar_v3.Schema$Event) {
+  const labelled = labelBuildersOnly(event);
   return {
-    summary: event.summary || "Untitled event",
-    description: htmlToText(event.description || ""),
+    summary: labelled.summary || "Untitled event",
+    description: htmlToText(labelled.description || ""),
     startIso: event.start?.dateTime ?? event.start?.date ?? "",
     endIso: event.end?.dateTime ?? event.end?.date ?? "",
     location: event.location || "",
+    buildersOnly: isBuildersOnly(event),
   };
 }
 
-function hasMeaningfulChange(a: EventMapping, b: ReturnType<typeof extractFields>): boolean {
+type EventFields = ReturnType<typeof extractFields>;
+
+function hasMeaningfulChange(a: EventMapping, b: EventFields): boolean {
   return (
     a.summary !== b.summary ||
     a.description !== b.description ||
     a.startIso !== b.startIso ||
     a.endIso !== b.endIso ||
-    a.location !== b.location
+    a.location !== b.location ||
+    !!a.buildersOnly !== b.buildersOnly
   );
 }
 
-async function syncCalendarToDiscord(guildId: string, announcementChannelId: string, calendarId: string): Promise<string> {
+interface Channels {
+  announcement: string;
+  // Unset means builders-only events aren't posted to Discord at all —
+  // never to #events instead.
+  buildersOnly?: string;
+}
+
+function channelFor(channels: Channels, buildersOnly: boolean | undefined): string | undefined {
+  return buildersOnly ? channels.buildersOnly : channels.announcement;
+}
+
+async function postTo(channelId: string | undefined, body: object): Promise<void> {
+  if (channelId) await postChannelMessage(channelId, body);
+}
+
+// Creates, updates, or removes the event's Discord Scheduled Event and
+// returns its ID. Scheduled Events are visible to the whole server, so a
+// builders-only event has none; one made private after it was mirrored has
+// its Scheduled Event deleted rather than cancelled, which would leave the
+// title showing.
+async function syncScheduledEvent(guildId: string, discordEventId: string | undefined, fields: EventFields): Promise<string | undefined> {
+  if (fields.buildersOnly) {
+    if (discordEventId) await deleteGuildScheduledEvent(guildId, discordEventId);
+    return undefined;
+  }
+  if (discordEventId) {
+    await updateGuildScheduledEvent(guildId, discordEventId, {
+      name: fields.summary,
+      scheduled_start_time: fields.startIso,
+      scheduled_end_time: fields.endIso,
+      description: fields.description,
+      entity_metadata: { location: fields.location || "TBD" },
+    });
+    return discordEventId;
+  }
+  const created = await createGuildScheduledEvent(guildId, {
+    name: fields.summary,
+    privacy_level: PRIVACY_LEVEL_GUILD_ONLY,
+    scheduled_start_time: fields.startIso,
+    scheduled_end_time: fields.endIso,
+    description: fields.description,
+    entity_type: ENTITY_TYPE_EXTERNAL,
+    entity_metadata: { location: fields.location || "TBD" },
+    status: EVENT_STATUS_SCHEDULED,
+  });
+  return created.id;
+}
+
+function eventEmbed(title: string, color: number, fields: EventFields): object {
+  return {
+    title,
+    description: fields.description || undefined,
+    color,
+    fields: [
+      { name: "When", value: formatCalendarEventWhen(fields.startIso, fields.endIso), inline: true },
+      ...(fields.location ? [{ name: "Where", value: fields.location, inline: true }] : []),
+    ],
+  };
+}
+
+function newEventMessage(calendarEventId: string, fields: EventFields): object {
+  const rsvpButtons = rsvpButtonRow(calendarEventId);
+  return {
+    ...(rsvpButtons ? { components: [rsvpButtons] } : {}),
+    embeds: [eventEmbed(`📅 New event: ${fields.summary}`, 0x2ecc71, fields)],
+  };
+}
+
+async function syncCalendarToDiscord(guildId: string, channels: Channels, calendarId: string): Promise<string> {
   const syncToken = await getSyncToken();
   const { events, nextSyncToken } = await listCalendarChanges(calendarId, syncToken);
 
@@ -65,8 +139,10 @@ async function syncCalendarToDiscord(guildId: string, announcementChannelId: str
 
       if (event.status === "cancelled") {
         if (mapping && mapping.status !== "cancelled") {
-          await updateGuildScheduledEvent(guildId, mapping.discordEventId, { status: EVENT_STATUS_CANCELED });
-          await postChannelMessage(announcementChannelId, {
+          if (mapping.discordEventId) {
+            await updateGuildScheduledEvent(guildId, mapping.discordEventId, { status: EVENT_STATUS_CANCELED });
+          }
+          await postTo(channelFor(channels, mapping.buildersOnly), {
             embeds: [{ title: `🚫 EVENT CANCELLED: ${mapping.summary}`, color: 0xe74c3c }],
           });
           await saveEventMapping(event.id, { ...mapping, status: "cancelled", emailPending: false });
@@ -78,57 +154,22 @@ async function syncCalendarToDiscord(guildId: string, announcementChannelId: str
       const fields = extractFields(event);
 
       if (!mapping) {
-        const discordEvent = await createGuildScheduledEvent(guildId, {
-          name: fields.summary,
-          privacy_level: PRIVACY_LEVEL_GUILD_ONLY,
-          scheduled_start_time: fields.startIso,
-          scheduled_end_time: fields.endIso,
-          description: fields.description,
-          entity_type: ENTITY_TYPE_EXTERNAL,
-          entity_metadata: { location: fields.location || "TBD" },
-          status: EVENT_STATUS_SCHEDULED,
-        });
-        const rsvpButtons = rsvpButtonRow(event.id);
-        await postChannelMessage(announcementChannelId, {
-          ...(rsvpButtons ? { components: [rsvpButtons] } : {}),
-          embeds: [
-            {
-              title: `📅 New event: ${fields.summary}`,
-              description: fields.description || undefined,
-              color: 0x2ecc71,
-              fields: [
-                { name: "When", value: formatCalendarEventWhen(fields.startIso, fields.endIso), inline: true },
-                ...(fields.location ? [{ name: "Where", value: fields.location, inline: true }] : []),
-              ],
-            },
-          ],
-        });
+        const discordEventId = await syncScheduledEvent(guildId, undefined, fields);
+        await postTo(channelFor(channels, fields.buildersOnly), newEventMessage(event.id, fields));
         // The announcement email goes out from sendPendingEventEmails, right
         // after this loop, so a failed send gets retried on later polls.
-        await saveEventMapping(event.id, { discordEventId: discordEvent.id, status: "active", ...fields, emailPending: true });
+        await saveEventMapping(event.id, { discordEventId, status: "active", ...fields, emailPending: true });
         created++;
       } else if (hasMeaningfulChange(mapping, fields)) {
-        await updateGuildScheduledEvent(guildId, mapping.discordEventId, {
-          name: fields.summary,
-          scheduled_start_time: fields.startIso,
-          scheduled_end_time: fields.endIso,
-          description: fields.description,
-          entity_metadata: { location: fields.location || "TBD" },
-        });
-        await postChannelMessage(announcementChannelId, {
-          embeds: [
-            {
-              title: `🔄 EVENT UPDATE: ${fields.summary}`,
-              description: fields.description || undefined,
-              color: 0xf1c40f,
-              fields: [
-                { name: "When", value: formatCalendarEventWhen(fields.startIso, fields.endIso), inline: true },
-                ...(fields.location ? [{ name: "Where", value: fields.location, inline: true }] : []),
-              ],
-            },
-          ],
-        });
-        await saveEventMapping(event.id, { ...mapping, status: "active", ...fields });
+        const discordEventId = await syncScheduledEvent(guildId, mapping.discordEventId, fields);
+        // An event that just switched between public and builders-only has
+        // never been posted in its new channel, so it's announced there as new.
+        const message =
+          !!mapping.buildersOnly !== fields.buildersOnly
+            ? newEventMessage(event.id, fields)
+            : { embeds: [eventEmbed(`🔄 EVENT UPDATE: ${fields.summary}`, 0xf1c40f, fields)] };
+        await postTo(channelFor(channels, fields.buildersOnly), message);
+        await saveEventMapping(event.id, { ...mapping, status: "active", ...fields, discordEventId });
         updated++;
       }
     } catch (err) {
@@ -217,7 +258,8 @@ http("pollScheduledEvents", async (_req: Request, res: Response) => {
   // throttled CPU on Cloud Functions and might not happen.
   let summary: string;
   try {
-    const parts = [await syncCalendarToDiscord(guildId, announcementChannelId, calendarId)];
+    const channels = { announcement: announcementChannelId, buildersOnly: process.env.DISCORD_BUILDERS_CHANNEL_ID || undefined };
+    const parts = [await syncCalendarToDiscord(guildId, channels, calendarId)];
     parts.push(await runStep("emailed", () => sendPendingEventEmails()));
     parts.push(await runStep("interest changes", () => syncDiscordInterest(guildId)));
     parts.push(await runStep("rsvp events synced", () => syncPendingRsvps(calendarId)));

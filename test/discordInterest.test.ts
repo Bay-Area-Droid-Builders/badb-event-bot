@@ -68,6 +68,13 @@ describe("syncDiscordInterest", () => {
     });
   });
 
+  it("skips builders-only events, which have no Scheduled Event", async () => {
+    vi.mocked(listActiveEventMappings).mockResolvedValue([{ ...upcoming, discordEventId: undefined, buildersOnly: true }]);
+
+    await expect(syncDiscordInterest("guild", NOW)).resolves.toBe(0);
+    expect(listScheduledEventUserIds).not.toHaveBeenCalled();
+  });
+
   it("skips Interested users who haven't linked an email", async () => {
     vi.mocked(listScheduledEventUserIds).mockResolvedValue(["stranger"]);
 

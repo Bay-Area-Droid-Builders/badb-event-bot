@@ -1,4 +1,5 @@
 import type { calendar_v3 } from "googleapis";
+import { labelBuildersOnly } from "./buildersOnly";
 import { formatCalendarEventWhen, htmlToText } from "./format";
 import type { Email } from "./mailer";
 import { RSVP_CHOICES, RSVP_LABELS, rsvpLogoUrl, rsvpPageUrl } from "./rsvpLinks";
@@ -84,7 +85,8 @@ const DIGEST_INTRO = "Here's your digest of the upcoming events for the Bay Area
 
 // Callers only invoke this with a non-empty list — sendEventDigest skips
 // sending entirely when there's nothing upcoming.
-export function buildDigestEmail(events: calendar_v3.Schema$Event[], to: string): Email {
+export function buildDigestEmail(calendarEvents: calendar_v3.Schema$Event[], to: string): Email {
+  const events = calendarEvents.map(labelBuildersOnly);
   return {
     to,
     subject: "Upcoming Bay Area Droid Builder Events",

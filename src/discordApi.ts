@@ -45,6 +45,10 @@ export async function updateGuildScheduledEvent(guildId: string, eventId: string
   return res.json();
 }
 
+export async function deleteGuildScheduledEvent(guildId: string, eventId: string): Promise<void> {
+  await discordFetch(`/guilds/${guildId}/scheduled-events/${eventId}`, { method: "DELETE", headers: botHeaders() });
+}
+
 // Edits the message that a component interaction came from, using the
 // interaction's own webhook (no separate bot-token call needed here, but
 // bot token auth works too and is simpler to reason about, so we use it).

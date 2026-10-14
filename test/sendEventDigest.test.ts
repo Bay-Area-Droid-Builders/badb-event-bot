@@ -109,6 +109,17 @@ describe("sendEventDigest content", () => {
     }
   });
 
+  it("labels builders-only events in the digest", async () => {
+    list.mockResolvedValue({ data: { items: [{ id: "cal-1", ...upcoming[0], visibility: "private" }] } });
+
+    await run({ to: "me@example.com" });
+
+    const email = sendMail.mock.calls[0][0];
+    expect(email.text).toContain("Droid Day (BUILDERS ONLY)");
+    expect(email.text).toContain("Members only event announcement. Do Not Share!");
+    expect(email.html).toContain("Droid Day (BUILDERS ONLY)");
+  });
+
   it("emails the digest without posting it to Discord", async () => {
     const { postChannelMessage } = await import("../src/discordApi");
     vi.mocked(postChannelMessage).mockClear();
