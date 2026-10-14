@@ -36,3 +36,8 @@ export function rsvpPageUrl(calendarEventId: string, options: { status?: RsvpCho
   if (options.discord) url.searchParams.set("d", options.discord);
   return url.toString();
 }
+
+// The club logo, served by the rsvp function itself at /logo.png.
+export function rsvpLogoUrl(): string {
+  return `${pageUrl().replace(/\/+$/, "")}/logo.png`;
+}

@@ -1,6 +1,6 @@
 import type { calendar_v3 } from "googleapis";
 import { escapeHtml, eventWhen } from "./eventEmails";
-import { RSVP_CHOICES, RSVP_LABELS, RSVP_STATUS_LABELS, RsvpChoice } from "./rsvpLinks";
+import { RSVP_CHOICES, RSVP_LABELS, RSVP_STATUS_LABELS, RsvpChoice, rsvpLogoUrl } from "./rsvpLinks";
 
 // HTML for the RSVP page. Plain server-rendered forms, no JavaScript, so it
 // works from any email client's browser.
@@ -28,7 +28,7 @@ function page(title: string, body: string): string {
          font-family: -apple-system, Helvetica, Arial, sans-serif; line-height: 1.5; }
   main { max-width: 480px; margin: 0 auto; background: var(--card); border: 1px solid var(--border);
          border-radius: 12px; padding: 24px; }
-  .club { color: var(--accent); font-weight: bold; font-size: 0.9rem; margin: 0 0 8px; }
+  .logo { display: block; width: 96px; height: 96px; margin: 0 auto 16px; }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   .meta { color: var(--muted); margin: 0 0 20px; }
   label { display: block; font-weight: bold; margin: 12px 0 4px; }
@@ -45,7 +45,7 @@ function page(title: string, body: string): string {
   a { color: var(--accent); }
 </style>
 </head>
-<body><main><p class="club">Bay Area Droid Builders</p>${body}</main></body>
+<body><main><img class="logo" src="${escapeHtml(rsvpLogoUrl())}" alt="Bay Area Droid Builders" width="96" height="96">${body}</main></body>
 </html>`;
 }
 

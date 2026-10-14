@@ -75,7 +75,30 @@ describe("rsvp page", () => {
     vi.mocked(claimConfirmEmailSlot).mockResolvedValue(true);
   });
 
+  it("serves the club logo", async () => {
+    const headers: Record<string, string> = {};
+    let body: Buffer | undefined;
+    const res: any = {
+      status: vi.fn(() => res),
+      set: vi.fn((name: string, value: string) => ((headers[name] = value), res)),
+      send: vi.fn((b: Buffer) => ((body = b), res)),
+    };
+
+    await handler({ method: "GET", path: "/logo.png", query: {}, header: () => undefined }, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(headers["Content-Type"]).toBe("image/png");
+    expect(body!.subarray(1, 4).toString()).toBe("PNG");
+    expect(getCalendarEvent).not.toHaveBeenCalled();
+  });
+
   describe("showing the form", () => {
+    it("shows the club logo, served by this function", async () => {
+      const { html } = await call("GET", { event: "cal-1" });
+
+      expect(html).toContain('<img class="logo" src="https://rsvp.example.com/badb-rsvp/logo.png" alt="Bay Area Droid Builders"');
+    });
+
     it("asks a new visitor for their name and email, with their choice and Discord name filled in", async () => {
       const { status, html } = await call("GET", { event: "cal-1", status: "maybe", d: discordToken() });
 

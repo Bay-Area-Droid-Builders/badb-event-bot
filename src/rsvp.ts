@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import type { calendar_v3 } from "googleapis";
@@ -32,6 +34,14 @@ interface ConfirmClaim extends Identity {
   calendarEventId: string;
   status: RsvpChoice;
   discordUserId?: string;
+}
+
+// Read on first request rather than at load, so a missing file can't stop
+// the page itself from working. Lives in assets/, beside lib/.
+let logo: Buffer | undefined;
+function logoPng(): Buffer {
+  logo ??= readFileSync(join(__dirname, "..", "assets", "badb-logo.png"));
+  return logo;
 }
 
 const RESPONSE_TO_CHOICE: Record<string, RsvpChoice> = { accepted: "attending", tentative: "maybe", declined: "declined" };
@@ -240,6 +250,11 @@ async function submitConfirm(req: Request, res: Response, calendarId: string): P
 }
 
 http("rsvp", async (req: Request, res: Response) => {
+  if (req.path === "/logo.png") {
+    res.status(200).set("Content-Type", "image/png").set("Cache-Control", "public, max-age=86400").send(logoPng());
+    return;
+  }
+
   const calendarId = process.env.GOOGLE_CALENDAR_ID;
   if (!calendarId) {
     res.status(500).send("GOOGLE_CALENDAR_ID not set");
