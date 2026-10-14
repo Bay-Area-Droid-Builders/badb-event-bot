@@ -32,7 +32,31 @@ describe("event emails", () => {
 
     expect(email.to).toBe("r2@example.com");
     expect(email.subject).toBe("Confirm your RSVP: Droid <Day>");
-    expect(email.text).toContain("https://rsvp.example.com/badb-rsvp?confirm=tok");
+    expect(email.text).toBe(
+      [
+        "Hi R2,",
+        "",
+        "Confirm your RSVP for the upcoming Bay Area Droid Builders event:",
+        "",
+        "Droid <Day> — Oct 3, 2026, 6:00 PM – Oct 3, 2026, 9:00 PM",
+        "",
+        "You've RSVPed as ATTENDING.",
+        "",
+        "Confirm my RSVP: https://rsvp.example.com/badb-rsvp?confirm=tok",
+        "",
+        "If you didn't ask for this, ignore this email and nothing will happen.",
+        "",
+        "Bay Area Droid Builders",
+      ].join("\n"),
+    );
     expect(email.html).toContain('href="https://rsvp.example.com/badb-rsvp?confirm=tok"');
+    expect(email.html).toContain("You've RSVPed as <strong>ATTENDING</strong>.");
+  });
+
+  it("shows the club logo in every email", () => {
+    const logo = '<img src="https://rsvp.example.com/badb-rsvp/logo.png" width="96" height="96" alt="Bay Area Droid Builders"';
+
+    expect(buildRsvpConfirmEmail(event, "R2", "Maybe", "https://x", "r2@example.com").html).toContain(logo);
+    expect(buildNewEventEmail(event, "R2SF@googlegroups.com").html).toContain(logo);
   });
 });
