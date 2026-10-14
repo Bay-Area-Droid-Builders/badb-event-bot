@@ -1,8 +1,7 @@
 import { http } from "@google-cloud/functions-framework";
 import type { Request, Response } from "@google-cloud/functions-framework";
 import { Firestore } from "@google-cloud/firestore";
-import { postChannelMessage } from "./discordApi";
-import { buildDigestDiscordText, buildDigestEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
+import { buildDigestEmail, MAILING_LIST_ADDRESS } from "./eventEmails";
 import { getCalendarClient } from "./googleAuth";
 import { sendEmail } from "./mailer";
 
@@ -28,9 +27,8 @@ async function setDueNext(dueNext: boolean): Promise<void> {
 
 http("sendEventDigest", async (req: Request, res: Response) => {
   const calendarId = process.env.GOOGLE_CALENDAR_ID;
-  const announcementChannelId = process.env.DISCORD_ANNOUNCEMENT_CHANNEL_ID;
-  if (!calendarId || !announcementChannelId) {
-    res.status(500).send("GOOGLE_CALENDAR_ID / DISCORD_ANNOUNCEMENT_CHANNEL_ID not set");
+  if (!calendarId) {
+    res.status(500).send("GOOGLE_CALENDAR_ID not set");
     return;
   }
 
@@ -64,9 +62,7 @@ http("sendEventDigest", async (req: Request, res: Response) => {
     return;
   }
 
-  await postChannelMessage(announcementChannelId, {
-    embeds: [{ title: "📋 Upcoming Events", description: buildDigestDiscordText(events), color: 0x8a2be2 }],
-  });
+  // Email only — #events gets new-event announcements, not the digest.
   await sendEmail(buildDigestEmail(events, recipient));
 
   if (isScheduledRun) await setDueNext(false);
