@@ -70,10 +70,21 @@ gcloud scheduler jobs run badb-poll-scheduled-events --location=us-west1
 
 ### Deploy a change
 
-`npm run deploy:<function>`, where `<function>` is `form-submit`,
-`interactions`, `poll-scheduled-events`, `send-event-digest`, or `rsvp`.
-The deploy prints every value from `.env.yaml`, secrets included, so keep
-its output to yourself.
+Merging to `main` deploys every function automatically, once the tests
+pass (the **Test and deploy** workflow in GitHub Actions). To redeploy
+without a code change, such as after updating a secret, run that workflow
+by hand from the Actions tab.
+
+Config lives in the repository's GitHub secrets, one per key in
+`.env.yaml.example`. To change a value, update its secret and redeploy. To
+add one, add it to `.env.yaml.example` and create the secret, or the deploy
+fails and names the missing secret.
+
+For a manual deploy from your own machine, put the same values in
+`.env.yaml` and run `npm run deploy:<function>`, where `<function>` is
+`form-submit`, `interactions`, `poll-scheduled-events`,
+`send-event-digest`, or `rsvp`. That command prints every value from
+`.env.yaml`, secrets included, so keep its output to yourself.
 
 ## How it works
 
