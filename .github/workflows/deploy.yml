@@ -2,7 +2,9 @@ name: Test and deploy
 
 # Pull requests run the tests. Merges to main run them again, then deploy
 # every function. Deploys sign in to Google Cloud through Workload Identity
-# Federation, which only trusts runs on this repo's main branch.
+# Federation, which only trusts runs on the club repo's main branch (by
+# repository ID, so a rename or move doesn't break it). Forks skip the
+# deploy job, since they can't sign in.
 
 on:
   pull_request:
@@ -34,7 +36,7 @@ jobs:
 
   deploy:
     needs: test
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.repository == 'Bay-Area-Droid-Builders/badb-event-bot' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
